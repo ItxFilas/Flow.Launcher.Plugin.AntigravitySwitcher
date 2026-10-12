@@ -1,0 +1,13 @@
+{
+  "$schema": "https://www.flowlauncher.com/schemas/plugin.schema.json",
+  "ID": "A7C4E19B2F8D4C6EA1B03D5F87C24E91",
+  "ActionKeyword": "ag",
+  "Name": "Antigravity Switcher",
+  "Description": "Správa a přepínání účtů Antigravity Account Switcher",
+  "Author": "dlest",
+  "Version": "1.0.0",
+  "Language": "csharp",
+  "Website": "https://github.com/muriel-gasparini/antigravity-account-switcher",
+  "ExecuteFileName": "Flow.Launcher.Plugin.AntigravitySwitcher.dll",
+  "IcoPath": "Images\\app.png"
+}

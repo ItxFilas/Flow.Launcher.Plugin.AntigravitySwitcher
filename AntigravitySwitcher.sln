@@ -1,0 +1,23 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Flow.Launcher.Plugin.AntigravitySwitcher", "Flow.Launcher.Plugin.AntigravitySwitcher.csproj", "{B2E91C44-7A18-4F0D-9C3A-8E51D0A6F117}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Flow.Launcher.Plugin.AntigravitySwitcher.Tests", "tests\Flow.Launcher.Plugin.AntigravitySwitcher.Tests.csproj", "{C4D82A11-9B7E-4E21-A6F8-1D3C9E07B442}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B2E91C44-7A18-4F0D-9C3A-8E51D0A6F117}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B2E91C44-7A18-4F0D-9C3A-8E51D0A6F117}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B2E91C44-7A18-4F0D-9C3A-8E51D0A6F117}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B2E91C44-7A18-4F0D-9C3A-8E51D0A6F117}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C4D82A11-9B7E-4E21-A6F8-1D3C9E07B442}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C4D82A11-9B7E-4E21-A6F8-1D3C9E07B442}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C4D82A11-9B7E-4E21-A6F8-1D3C9E07B442}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C4D82A11-9B7E-4E21-A6F8-1D3C9E07B442}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
