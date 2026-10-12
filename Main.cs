@@ -57,7 +57,7 @@ public sealed class Main : IPlugin, IContextMenu
         {
             return
             [
-                ErrorResult("Plugin narazil na chybu", ex.Message)
+                ErrorResult("Plugin error", ex.Message)
             ];
         }
     }
@@ -73,7 +73,7 @@ public sealed class Main : IPlugin, IContextMenu
         [
             new Result
             {
-                Title = "Odebrat tento účet",
+                Title = "Remove this account",
                 SubTitle = account.DisplayName,
                 IcoPath = RemoveIcon,
                 Score = 100,
@@ -85,21 +85,21 @@ public sealed class Main : IPlugin, IContextMenu
             },
             new Result
             {
-                Title = "Zkopírovat email do schránky",
+                Title = "Copy email to clipboard",
                 SubTitle = account.Email,
                 IcoPath = AppIcon,
                 Score = 90,
                 Action = _ =>
                 {
                     _context.API.CopyToClipboard(account.Email, directCopy: false, showDefaultNotification: false);
-                    _context.API.ShowMsg("Schránka", account.Email, AppIcon);
+                    _context.API.ShowMsg("Clipboard", account.Email, AppIcon);
                     return false;
                 }
             },
             new Result
             {
-                Title = "Otevřít v prohlížeči",
-                SubTitle = "Webový dashboard účtů",
+                Title = "Open in browser",
+                SubTitle = "Accounts web dashboard",
                 IcoPath = WebIcon,
                 Score = 80,
                 AsyncAction = async _ =>
@@ -116,7 +116,7 @@ public sealed class Main : IPlugin, IContextMenu
         var accounts = ListCachedOrSchedule(out var loading, out var error);
         if (error is not null)
         {
-            return [ErrorResult("Nelze načíst účty", error)];
+            return [ErrorResult("Cannot load accounts", error)];
         }
 
         if (loading)
@@ -125,8 +125,8 @@ public sealed class Main : IPlugin, IContextMenu
             [
                 new Result
                 {
-                    Title = "Načítám účty…",
-                    SubTitle = "Probíhá list-accounts / dashboard API",
+                    Title = "Loading accounts…",
+                    SubTitle = "Fetching list-accounts / dashboard API",
                     IcoPath = AppIcon,
                     Score = 100
                 }
@@ -135,14 +135,14 @@ public sealed class Main : IPlugin, IContextMenu
 
         var results = new List<Result>();
         var next = AccountService.SelectNextAvailable(accounts);
-        if (string.IsNullOrWhiteSpace(filter) || Matches("rychlé přepnutí next", filter))
+        if (string.IsNullOrWhiteSpace(filter) || Matches("switch next", filter))
         {
             results.Add(new Result
             {
-                Title = "Rychlé přepnutí na další účet",
+                Title = "Switch to next account",
                 SubTitle = next is null
-                    ? "Žádný další účet s volnou kvótou"
-                    : $"Next available: {next.DisplayName} · kvóta {next.RemainingLabel}",
+                    ? "No other account with free quota"
+                    : $"Next: {next.DisplayName} · 5hr {next.FiveHourLabel} · week {next.WeeklyLabel}",
                 IcoPath = NextIcon,
                 Score = 200,
                 ContextData = new ResultContext { Kind = ResultKind.NextSwitch, Account = next },
@@ -151,12 +151,12 @@ public sealed class Main : IPlugin, IContextMenu
                     try
                     {
                         var switched = await _service.SwitchToNextAsync().ConfigureAwait(false);
-                        _context.API.ShowMsg("Účet přepnut", switched.DisplayName, AppIcon);
+                        _context.API.ShowMsg("Account switched", switched.DisplayName, AppIcon);
                         _context.API.ChangeQuery(_context.CurrentPluginMetadata.ActionKeyword + " ", requery: true);
                     }
                     catch (Exception ex)
                     {
-                        _context.API.ShowMsgError("Přepnutí selhalo", ex.Message);
+                        _context.API.ShowMsgError("Switch failed", ex.Message);
                     }
 
                     return false;
@@ -167,7 +167,7 @@ public sealed class Main : IPlugin, IContextMenu
         foreach (var account in accounts.Where(a => Matches(a.DisplayName + " " + a.Id, filter)))
         {
             var captured = account;
-            var title = captured.IsActive ? $"{captured.DisplayName} [AKTIVNÍ]" : captured.DisplayName;
+            var title = captured.IsActive ? $"{captured.DisplayName} [ACTIVE]" : captured.DisplayName;
             results.Add(new Result
             {
                 Title = title,
@@ -181,12 +181,12 @@ public sealed class Main : IPlugin, IContextMenu
                     try
                     {
                         await _service.SwitchAsync(captured).ConfigureAwait(false);
-                        _context.API.ShowMsg("Účet přepnut", captured.DisplayName, AppIcon);
+                        _context.API.ShowMsg("Account switched", captured.DisplayName, AppIcon);
                         _context.API.ChangeQuery(_context.CurrentPluginMetadata.ActionKeyword + " ", requery: true);
                     }
                     catch (Exception ex)
                     {
-                        _context.API.ShowMsgError("Přepnutí selhalo", ex.Message);
+                        _context.API.ShowMsgError("Switch failed", ex.Message);
                     }
 
                     return false;
@@ -203,14 +203,14 @@ public sealed class Main : IPlugin, IContextMenu
         {
             results.Add(new Result
             {
-                Title = "Žádné účty",
-                SubTitle = "Použijte ag add pro přidání Google účtu",
+                Title = "No accounts",
+                SubTitle = "Use 'ag add' to add a Google account",
                 IcoPath = AddIcon,
                 Score = 10,
                 Action = _ =>
                 {
                     _service.StartAddAccount();
-                    _context.API.ShowMsg("Přidání účtu", "OAuth flow byl spuštěn v prohlížeči.", AppIcon);
+                    _context.API.ShowMsg("Add account", "OAuth flow has been started in your browser.", AppIcon);
                     return true;
                 }
             });
@@ -224,7 +224,7 @@ public sealed class Main : IPlugin, IContextMenu
         var accounts = ListCachedOrSchedule(out var loading, out var error);
         if (error is not null)
         {
-            return [ErrorResult("Nelze načíst účty", error)];
+            return [ErrorResult("Cannot load accounts", error)];
         }
 
         if (loading)
@@ -233,8 +233,8 @@ public sealed class Main : IPlugin, IContextMenu
             [
                 new Result
                 {
-                    Title = "Načítám účty k odebrání…",
-                    SubTitle = "Probíhá list-accounts / dashboard API",
+                    Title = "Loading accounts to remove…",
+                    SubTitle = "Fetching list-accounts / dashboard API",
                     IcoPath = RemoveIcon,
                     Score = 100
                 }
@@ -248,8 +248,8 @@ public sealed class Main : IPlugin, IContextMenu
             [
                 new Result
                 {
-                    Title = "Žádný účet k odebrání",
-                    SubTitle = string.IsNullOrWhiteSpace(filter) ? "Seznam je prázdný" : $"Filtr „{filter}“ nic nenašel",
+                    Title = "No account to remove",
+                    SubTitle = string.IsNullOrWhiteSpace(filter) ? "The list is empty" : $"Filter \"{filter}\" matched nothing",
                     IcoPath = RemoveIcon,
                     Score = 50
                 }
@@ -261,8 +261,8 @@ public sealed class Main : IPlugin, IContextMenu
             var captured = account;
             return new Result
             {
-                Title = $"Odebrat {captured.DisplayName}",
-                SubTitle = "Enter potvrdí odebrání účtu ze switcheru",
+                Title = $"Remove {captured.DisplayName}",
+                SubTitle = "Press Enter to confirm removing this account from the switcher",
                 IcoPath = RemoveIcon,
                 Score = captured.IsActive ? 80 : 100,
                 ContextData = new ResultContext { Kind = ResultKind.RemoveAccount, Account = captured },
@@ -295,14 +295,14 @@ public sealed class Main : IPlugin, IContextMenu
         }
         catch (Exception ex)
         {
-            return [ErrorResult("Status selhal", ex.Message)];
+            return [ErrorResult("Status failed", ex.Message)];
         }
     }
 
     private Result AddAccountResult() => new()
     {
-        Title = "Přidat Google účet",
-        SubTitle = "Spustí antigravity-account-switcher add-account a otevře OAuth v prohlížeči",
+        Title = "Add Google account",
+        SubTitle = "Runs antigravity-account-switcher add-account and opens OAuth in your browser",
         IcoPath = AddIcon,
         Score = 100,
         Action = _ =>
@@ -310,11 +310,11 @@ public sealed class Main : IPlugin, IContextMenu
             try
             {
                 _service.StartAddAccount();
-                _context.API.ShowMsg("Přidání účtu", "OAuth flow byl spuštěn. Dokončete přihlášení v prohlížeči.", AppIcon);
+                _context.API.ShowMsg("Add account", "OAuth flow started. Complete the sign-in in your browser.", AppIcon);
             }
             catch (Exception ex)
             {
-                _context.API.ShowMsgError("add-account selhal", ex.Message);
+                _context.API.ShowMsgError("add-account failed", ex.Message);
             }
 
             return true;
@@ -323,8 +323,8 @@ public sealed class Main : IPlugin, IContextMenu
 
     private Result RefreshResult() => new()
     {
-        Title = "Obnovit kvóty",
-        SubTitle = "Vynutí refresh-quotas / POST /api/quota/refresh",
+        Title = "Refresh quotas",
+        SubTitle = "Forces refresh-quotas / POST /api/quota/refresh",
         IcoPath = RefreshIcon,
         Score = 100,
         AsyncAction = async _ =>
@@ -332,12 +332,12 @@ public sealed class Main : IPlugin, IContextMenu
             try
             {
                 await _service.RefreshQuotasAsync().ConfigureAwait(false);
-                _context.API.ShowMsg("Kvóty", "Aktualizace dokončena.", AppIcon);
+                _context.API.ShowMsg("Quotas", "Refresh complete.", AppIcon);
                 _context.API.ChangeQuery(_context.CurrentPluginMetadata.ActionKeyword + " ", requery: true);
             }
             catch (Exception ex)
             {
-                _context.API.ShowMsgError("Obnova kvót selhala", ex.Message);
+                _context.API.ShowMsgError("Refresh failed", ex.Message);
             }
 
             return false;
@@ -346,8 +346,8 @@ public sealed class Main : IPlugin, IContextMenu
 
     private Result OpenDashboardResult() => new()
     {
-        Title = "Otevřít webový dashboard",
-        SubTitle = $"Webové rozhraní switcheru (výchozí http://127.0.0.1:{AccountService.DefaultDashboardPort})",
+        Title = "Open web dashboard",
+        SubTitle = $"Switcher web UI (default http://127.0.0.1:{AccountService.DefaultDashboardPort})",
         IcoPath = WebIcon,
         Score = 100,
         AsyncAction = async _ =>
@@ -359,20 +359,20 @@ public sealed class Main : IPlugin, IContextMenu
 
     private List<Result> CommandHints() =>
     [
-        Hint("ag add", "Přidat účet (OAuth)", AddIcon),
-        Hint("ag remove", "Odebrat účet", RemoveIcon),
-        Hint("ag refresh", "Obnovit kvóty", RefreshIcon),
-        Hint("ag web", "Otevřít dashboard", WebIcon)
+        Hint("ag add", "Add account (OAuth)", AddIcon),
+        Hint("ag remove", "Remove account", RemoveIcon),
+        Hint("ag refresh", "Refresh quotas", RefreshIcon),
+        Hint("ag web", "Open dashboard", WebIcon)
     ];
 
     private List<Result> HelpResults() =>
     [
-        Hint("ag", "Seznam účtů a rychlé přepnutí", AppIcon),
-        Hint("ag add", "Přidat Google účet", AddIcon),
-        Hint("ag remove [filtr]", "Odebrat účet", RemoveIcon),
-        Hint("ag refresh", "Obnovit kvóty", RefreshIcon),
-        Hint("ag web", "Otevřít dashboard", WebIcon),
-        Hint("ag status", "Stav switcheru", AppIcon)
+        Hint("ag", "List accounts and quick switch", AppIcon),
+        Hint("ag add", "Add Google account", AddIcon),
+        Hint("ag remove [filter]", "Remove account", RemoveIcon),
+        Hint("ag refresh", "Refresh quotas", RefreshIcon),
+        Hint("ag web", "Open dashboard", WebIcon),
+        Hint("ag status", "Switcher status", AppIcon)
     ];
 
     private Result Hint(string title, string subtitle, string icon) => new()
@@ -481,8 +481,8 @@ public sealed class Main : IPlugin, IContextMenu
     private async Task RemoveWithConfirmAsync(AccountInfo account)
     {
         var answer = _context.API.ShowMsgBox(
-            $"Opravdu odebrat účet {account.DisplayName}?",
-            "Odebrat účet");
+            $"Really remove account {account.DisplayName}?",
+            "Remove account");
 
         if (answer.ToString() is not ("Yes" or "OK"))
         {
@@ -492,12 +492,12 @@ public sealed class Main : IPlugin, IContextMenu
         try
         {
             await _service.RemoveAsync(account).ConfigureAwait(false);
-            _context.API.ShowMsg("Účet odebrán", account.DisplayName, AppIcon);
+            _context.API.ShowMsg("Account removed", account.DisplayName, AppIcon);
             _context.API.ChangeQuery(_context.CurrentPluginMetadata.ActionKeyword + " ", requery: true);
         }
         catch (Exception ex)
         {
-            _context.API.ShowMsgError("Odebrání selhalo", ex.Message);
+            _context.API.ShowMsgError("Removal failed", ex.Message);
         }
     }
 

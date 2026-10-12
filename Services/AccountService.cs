@@ -34,7 +34,7 @@ public sealed class AccountService
             if (!result.Succeeded)
             {
                 throw new InvalidOperationException(string.IsNullOrWhiteSpace(result.Combined)
-                    ? "list-accounts selhal."
+                    ? "list-accounts failed."
                     : result.Combined.Trim());
             }
 
@@ -62,7 +62,7 @@ public sealed class AccountService
         if (!switched)
         {
             throw new InvalidOperationException(
-                "Přepnutí účtu selhalo. Spusťte switcher jako daemon (`antigravity-account-switcher serve` nebo `launch`) a zkuste to znovu.");
+                "Switching failed. Run the switcher as a daemon (`antigravity-account-switcher serve` or `launch`) and try again.");
         }
 
         _cache.Invalidate();
@@ -72,7 +72,7 @@ public sealed class AccountService
     {
         var accounts = await ListAccountsAsync(forceRefresh: true, cancellationToken).ConfigureAwait(false);
         var next = SelectNextAvailable(accounts) ??
-                   throw new InvalidOperationException("Není k dispozici žádný další účet s volnou kvótou.");
+                   throw new InvalidOperationException("No other account with free quota is available.");
 
         await SwitchAsync(next, cancellationToken).ConfigureAwait(false);
         return next;
@@ -119,7 +119,7 @@ public sealed class AccountService
         }
 
         throw new InvalidOperationException(
-            "Odebrání účtu selhalo. Spusťte switcher jako daemon (`serve` / `launch`) — REST DELETE je dostupný na /api/accounts/{id}.");
+            "Removing the account failed. Run the switcher as a daemon (`serve` / `launch`) — REST DELETE is available at /api/accounts/{id}.");
     }
 
     public async Task RefreshQuotasAsync(CancellationToken cancellationToken = default)

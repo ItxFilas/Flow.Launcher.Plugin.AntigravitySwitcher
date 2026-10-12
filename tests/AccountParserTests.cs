@@ -28,12 +28,16 @@ public sealed class AccountParserTests
         Assert.Equal("active", alice.Status);
         Assert.True(alice.IsActive);
         Assert.Equal(87, alice.RemainingPercent);
+        Assert.Equal(87, alice.FiveHourPercent);
+        Assert.Equal(92, alice.WeeklyPercent);
 
         var bob = accounts[1];
         Assert.Equal("bob@example.com", bob.Email);
         Assert.Equal("exhausted", bob.Status);
         Assert.False(bob.IsActive);
         Assert.Equal(0, bob.RemainingPercent);
+        Assert.Equal(0, bob.FiveHourPercent);
+        Assert.Equal(41, bob.WeeklyPercent);
     }
 
     [Fact]
@@ -48,6 +52,8 @@ public sealed class AccountParserTests
 
         var account = Assert.Single(accounts);
         Assert.Equal(55, account.RemainingPercent);
+        Assert.Equal(-1, account.FiveHourPercent);
+        Assert.Equal(55, account.WeeklyPercent);
     }
 
     [Fact]
@@ -91,7 +97,39 @@ public sealed class AccountParserTests
         Assert.Equal("active", account.Status);
         Assert.True(account.IsActive);
         Assert.Equal(50, account.RemainingPercent);
+        Assert.Equal(80, account.FiveHourPercent);
+        Assert.Equal(50, account.WeeklyPercent);
         Assert.Equal(DateTimeOffset.Parse("2026-01-01T10:00:00Z"), account.ResetAt);
+        Assert.Equal(DateTimeOffset.Parse("2026-01-01T10:00:00Z"), account.FiveHourResetAt);
+        Assert.Equal(DateTimeOffset.Parse("2026-01-05T10:00:00Z"), account.WeeklyResetAt);
+    }
+
+    [Fact]
+    public void ParseApiAccounts_ReadsRealFiveHourAndWeeklyWindows()
+    {
+        const string json =
+            """
+            [
+              {
+                "id": "a4",
+                "email": "dave@example.com",
+                "status": "active",
+                "is_active": true,
+                "buckets": [
+                  { "window": "5h",     "remaining_fraction": 0.250652,  "reset_time": "2026-10-12T20:13:53Z" },
+                  { "window": "weekly", "remaining_fraction": 0.6759738, "reset_time": "2026-10-18T17:11:26Z" }
+                ]
+              }
+            ]
+            """;
+
+        var account = Assert.Single(AccountParser.ParseApiAccounts(json));
+
+        Assert.Equal(25.065, account.FiveHourPercent, 3);
+        Assert.Equal(67.597, account.WeeklyPercent, 3);
+        Assert.Equal(25.065, account.RemainingPercent, 3);
+        Assert.Equal(DateTimeOffset.Parse("2026-10-12T20:13:53Z"), account.FiveHourResetAt);
+        Assert.Equal(DateTimeOffset.Parse("2026-10-18T17:11:26Z"), account.WeeklyResetAt);
     }
 
     [Fact]

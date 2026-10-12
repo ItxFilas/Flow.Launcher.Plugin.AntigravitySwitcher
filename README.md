@@ -1,142 +1,149 @@
-# Antigravity Switcher — plugin pro Flow Launcher
+# Antigravity Switcher — a Flow Launcher plugin
 
-Plugin pro [Flow Launcher](https://www.flowlauncher.com/) (C#/.NET) pro kompletní správu a
-přepínání účtů nástroje [Antigravity Account Switcher](https://github.com/Muriel-Gasparini/antigravity-account-switcher).
+A [Flow Launcher](https://www.flowlauncher.com/) plugin (C#/.NET) for managing and switching
+[Antigravity Account Switcher](https://github.com/Muriel-Gasparini/antigravity-account-switcher)
+accounts.
 
-Klíčové slovo: **`ag`**
-
----
-
-## Jak to funguje
-
-Switcher (v1.1.0) **neposkytuje** CLI příkaz `switch` ani `remove-account`. Přepínání a odebírání
-účtů proto plugin provádí přes lokální REST API webového dashboardu switcheru:
-
-| Operace        | REST volání                            | Fallback CLI                |
-| :------------- | :------------------------------------- | :-------------------------- |
-| Seznam účtů    | `GET /api/accounts`                    | `list-accounts`             |
-| Přepnutí účtu  | `POST /api/accounts/{id}/select`       | `switch <id>` (kompatibilita) |
-| Odebrání účtu  | `DELETE /api/accounts/{id}`            | `remove-account` (kompatibilita) |
-| Obnovení kvót  | `POST /api/quota/refresh`              | `refresh-quotas`            |
-| Stav           | —                                      | `status`                    |
-
-> **Důležité:** Dashboard API je dostupné pouze když běží switcher jako daemon
-> (`antigravity-account-switcher serve` nebo `launch`). Pro samotné čtení seznamu účtů stačí CLI.
+Action keyword: **`ag`**
 
 ---
 
-## Požadavky
+## How it works
 
-- Windows s [.NET SDK 9.0+](https://dotnet.microsoft.com/download) (pro build).
-- Flow Launcher **1.20.x** (běží na .NET 7). Plugin proto cílí `net7.0-windows` a
-  `Flow.Launcher.Plugin` **4.7.0**. Pro Flow Launcher postavený na .NET 9 změň v `.csproj`
-  `TargetFramework` na `net9.0-windows` a balíček na `5.x`.
-- Nainstalovaný a nakonfigurovaný `antigravity-account-switcher`
-  (binárka v `PATH`, v `%LOCALAPPDATA%\antigravity-account-switcher\` nebo v `~/.local/bin`).
-- Pro WSL režim: `wsl.exe` s nainstalovaným switcherem v distribuci.
+The switcher (v1.1.0) **does not** expose a CLI `switch` or `remove-account` command. The plugin
+therefore performs switching and removal through the local REST API of the switcher's web
+dashboard:
 
-Plugin automaticky rozpozná, zda switcher běží nativně na Windows nebo ve WSL
-(`wsl.exe -e antigravity-account-switcher`). Cestu lze vynutit proměnnou prostředí
-`ANTIGRAVITY_SWITCHER_BIN`.
+| Operation       | REST call                              | CLI fallback                |
+| :-------------- | :------------------------------------- | :-------------------------- |
+| List accounts   | `GET /api/accounts`                    | `list-accounts`             |
+| Switch account  | `POST /api/accounts/{id}/select`       | `switch <id>` (compat)      |
+| Remove account  | `DELETE /api/accounts/{id}`            | `remove-account` (compat)   |
+| Refresh quotas  | `POST /api/quota/refresh`              | `refresh-quotas`            |
+| Status          | —                                      | `status`                    |
+
+> **Important:** the dashboard API is only available while the switcher runs as a daemon
+> (`antigravity-account-switcher serve` or `launch`). Reading the account list alone works with the CLI.
 
 ---
 
-## Sestavení
+## Requirements
+
+- Windows with the [.NET SDK](https://dotnet.microsoft.com/download) (8.0 or newer) to build.
+- Flow Launcher **1.20.x** (running on .NET 7). The plugin therefore targets `net7.0-windows` and
+  `Flow.Launcher.Plugin` **4.7.0**. For a .NET 9 build of Flow Launcher, change `TargetFramework`
+  in the `.csproj` to `net9.0-windows` and the package to `5.x`.
+- An installed and configured `antigravity-account-switcher`
+  (binary in `PATH`, in `%LOCALAPPDATA%\antigravity-account-switcher\`, or in `~/.local/bin`).
+- For WSL mode: `wsl.exe` with the switcher installed inside the distribution.
+
+The plugin automatically detects whether the switcher runs natively on Windows or inside WSL
+(`wsl.exe -e antigravity-account-switcher`). The path can be forced with the
+`ANTIGRAVITY_SWITCHER_BIN` environment variable.
+
+---
+
+## Build
 
 ```powershell
-# Pouze build do .\publish
+# Build into .\publish only
 pwsh ./scripts/build.ps1
 
-# Nebo přímo:
+# Or directly:
 dotnet publish .\Flow.Launcher.Plugin.AntigravitySwitcher.csproj -c Release -o .\publish
 ```
 
-## Nasazení do Flow Launcheru
+## Deploy to Flow Launcher
 
-> **Než nasadíš plugin, zavři Flow Launcher** — drží načtené DLL pluginu zamčené a kopírování by selhalo.
-> Následně stačí Flow Launcher znovu spustit (načte plugin při startu).
+> **Close Flow Launcher before deploying** — it keeps the loaded plugin DLL locked and the copy
+> would fail. Then just start Flow Launcher again (it loads the plugin on startup).
 
 ```powershell
-# Sestaví a zkopíruje plugin do %APPDATA%\FlowLauncher\Plugins\AntigravitySwitcher
+# Builds and copies the plugin into %APPDATA%\FlowLauncher\Plugins\AntigravitySwitcher
 pwsh ./scripts/build.ps1 -Deploy
 ```
 
-Ruční ekvivalent:
+Manual equivalent:
 
-1. Sestav plugin: `dotnet publish -c Release -o .\publish`
-2. Zkopíruj **celý obsah** složky `.\publish` do
+1. Build the plugin: `dotnet publish -c Release -o .\publish`
+2. Copy the **entire contents** of `.\publish` into
    `%APPDATA%\FlowLauncher\Plugins\AntigravitySwitcher`
-   (na úrovni složky musí ležet `plugin.json` a
-   `Flow.Launcher.Plugin.AntigravitySwitcher.dll`).
-3. Restartuj Flow Launcher (nebo v nastavení použij *Reload Plugin Data*).
-4. Napiš `ag`.
+   (the folder must contain `plugin.json` and
+   `Flow.Launcher.Plugin.AntigravitySwitcher.dll` at its root).
+3. Restart Flow Launcher (or use *Reload Plugin Data* in its settings).
+4. Type `ag`.
 
 ---
 
-## Použití
+## Usage
 
-| Příkaz              | Popis |
+| Command             | Description |
 | :------------------ | :---- |
-| `ag`                | Seznam účtů. První položka **„Rychlé přepnutí na další účet“** přepne na účet s nejlepší volnou kvótou. |
-| `ag <filtr>`        | Vyfiltruje účty podle emailu / ID. |
-| `ag add`            | Přidá nový Google účet (`add-account`, OAuth v prohlížeči). |
-| `ag remove [filtr]` | Nabídne účty k odebrání; Enter potvrdí smazání. |
-| `ag refresh`        | Vynutí okamžitou aktualizaci kvót. |
-| `ag web`            | Otevře webový dashboard (`http://127.0.0.1:8080`, případně port z konfigurace). |
-| `ag status`         | Zobrazí stav switcheru (kopírovatelné). |
-| `ag help`           | Nápověda s přehledem příkazů. |
+| `ag`                | Account list. The first row, **"Switch to next account"**, switches to the account with the most free quota. |
+| `ag <filter>`       | Filters accounts by email / ID. |
+| `ag add`            | Adds a new Google account (`add-account`, OAuth in your browser). |
+| `ag remove [filter]`| Offers accounts for removal; Enter confirms the deletion. |
+| `ag refresh`        | Forces an immediate quota refresh. |
+| `ag web`            | Opens the web dashboard (`http://127.0.0.1:8080`, or the configured port). |
+| `ag status`         | Shows the switcher status (copyable). |
+| `ag help`           | Command overview. |
 
-U každého účtu je v titulku označení `[AKTIVNÍ]`, v podtitulku stav
-(Active/Standby/Exhausted/Error/Disabled), zbývající kvóta v % a čas do resetu limitu.
+Each account row shows `[ACTIVE]` in the title, and a subtitle with the state
+(Active/Standby/Exhausted/Error/Disabled), the remaining quota per window
+(`5hr` and `week`) and the time until each window resets, e.g.:
 
-### Kontextové menu (`Shift + Enter` / pravé tlačítko)
+```
+Active · 5hr 87% (resets 3h12m) · week 68% (resets 5d)
+```
 
-- **Odebrat tento účet**
-- **Zkopírovat email do schránky**
-- **Otevřít v prohlížeči**
+### Context menu (`Shift + Enter` / right click)
+
+- **Remove this account**
+- **Copy email to clipboard**
+- **Open in browser**
 
 ---
 
-## Výkon a spolehlivost
+## Performance and reliability
 
-- Všechna volání CLI/HTTP jsou **asynchronní** s timeoutem — Flow Launcher nezamrzne.
-- Seznam účtů se **cachuje** (8 s) a obnovuje na pozadí, takže je UI okamžitě responzivní.
-- Ikony stavu: aktivní / standby / vyčerpaný účet (viz `Images/`).
+- All CLI/HTTP calls are **asynchronous** with a timeout — Flow Launcher never freezes.
+- The account list is **cached** (8 s) and refreshed in the background, so the UI stays responsive.
+- Status icons: active / standby / exhausted account (see `Images/`).
 
-### Proměnné prostředí
+### Environment variables
 
-| Proměnná                     | Význam |
+| Variable                     | Meaning |
 | :--------------------------- | :----- |
-| `ANTIGRAVITY_SWITCHER_BIN`   | Explicitní cesta k binárce switcheru. |
-| `ANTIGRAVITY_PORT`           | Port webového dashboardu (přednost před konfigurací). |
+| `ANTIGRAVITY_SWITCHER_BIN`   | Explicit path to the switcher binary. |
+| `ANTIGRAVITY_PORT`           | Web dashboard port (takes precedence over the config file). |
 
 ---
 
-## Vývoj a testy
+## Development and tests
 
 ```powershell
 dotnet build .\AntigravitySwitcher.sln -c Release
 dotnet test  .\AntigravitySwitcher.sln -c Release
 ```
 
-Projekt testů (`tests/`) ověřuje parsery CLI/API odpovědí, formátování účtů,
-cache a logiku výběru dalšího účtu.
+The test project (`tests/`) covers the CLI/API response parsers, account formatting,
+the cache, and the next-account selection logic.
 
-### Struktura
+### Structure
 
 ```
-Flow.Launcher.Plugin.AntigravitySwitcher.csproj   # hlavní plugin (net7.0-windows)
-plugin.json                                       # manifest Flow Launcheru (keyword: ag)
+Flow.Launcher.Plugin.AntigravitySwitcher.csproj   # main plugin (net7.0-windows)
+plugin.json                                       # Flow Launcher manifest (keyword: ag)
 Main.cs                                           # IPlugin + IContextMenu
-Cli/                                              # lokalizace binárky, spouštění CLI, dashboard API, parsery
-Models/AccountInfo.cs                             # model účtu + formátování
+Cli/                                              # binary localization, CLI runner, dashboard API, parsers
+Models/AccountInfo.cs                             # account model + formatting
 Services/                                         # AccountService, cache
-Images/                                           # ikony (generuje scripts/Generate-Icons.ps1)
+Images/                                           # icons (generated by scripts/Generate-Icons.ps1)
 scripts/build.ps1                                 # build + deploy
-scripts/Generate-Icons.ps1                        # regenerace PNG ikon
+scripts/Generate-Icons.ps1                        # regenerate PNG icons
 ```
 
-### Regenerace ikon
+### Regenerating icons
 
 ```powershell
 pwsh ./scripts/Generate-Icons.ps1
@@ -144,10 +151,11 @@ pwsh ./scripts/Generate-Icons.ps1
 
 ---
 
-## Řešení problémů
+## Troubleshooting
 
-- **„Nástroj antigravity-account-switcher nebyl nalezen“** — přidej binárku do `PATH`,
-  nastav `ANTIGRAVITY_SWITCHER_BIN`, nebo zajisti, že je dostupná ve WSL.
-- **Přepnutí účtu selže** — spusť switcher jako daemon
-  (`antigravity-account-switcher serve` nebo `launch`); bez běžícího dashboardu nelze účet přepnout.
-- **Nevidím změny** — použij `ag refresh`, případně restartuj Flow Launcher.
+- **"The antigravity-account-switcher tool was not found"** — add the binary to `PATH`,
+  set `ANTIGRAVITY_SWITCHER_BIN`, or make sure it is available inside WSL.
+- **Switching fails** — run the switcher as a daemon
+  (`antigravity-account-switcher serve` or `launch`); without a running dashboard the account
+  cannot be switched.
+- **I don't see the changes** — use `ag refresh`, or restart Flow Launcher.

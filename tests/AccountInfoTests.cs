@@ -27,28 +27,54 @@ public sealed class AccountInfoTests
     }
 
     [Fact]
-    public void ResetLabel_HandlesUnknownPastAndFutureResets()
+    public void WindowLabels_ShowPlaceholderForUnknownQuota()
     {
-        Assert.Equal("reset neznámý", new AccountInfo().ResetLabel);
-        Assert.Equal("reset teď", new AccountInfo { ResetAt = DateTimeOffset.UtcNow.AddMinutes(-5) }.ResetLabel);
-        Assert.Equal("reset za 3 d", new AccountInfo { ResetAt = DateTimeOffset.UtcNow.AddDays(3) }.ResetLabel);
-        Assert.StartsWith("reset za 2h", new AccountInfo { ResetAt = DateTimeOffset.UtcNow.AddHours(2).AddMinutes(30) }.ResetLabel);
-        Assert.StartsWith("reset za", new AccountInfo { ResetAt = DateTimeOffset.UtcNow.AddMinutes(30) }.ResetLabel);
+        Assert.Equal("N/A", new AccountInfo().FiveHourLabel);
+        Assert.Equal("N/A", new AccountInfo().WeeklyLabel);
+        Assert.Equal("25%", new AccountInfo { FiveHourPercent = 25.4 }.FiveHourLabel);
+        Assert.Equal("68%", new AccountInfo { WeeklyPercent = 67.6 }.WeeklyLabel);
     }
 
     [Fact]
-    public void Subtitle_CombinesStateQuotaAndReset()
+    public void ResetLabel_HandlesUnknownPastAndFutureResets()
+    {
+        Assert.Equal("reset unknown", new AccountInfo().ResetLabel);
+        Assert.Equal("reset now", new AccountInfo { ResetAt = DateTimeOffset.UtcNow.AddMinutes(-5) }.ResetLabel);
+        Assert.Equal("resets in 3d", new AccountInfo { ResetAt = DateTimeOffset.UtcNow.AddDays(3) }.ResetLabel);
+        Assert.StartsWith("resets in 2h", new AccountInfo { ResetAt = DateTimeOffset.UtcNow.AddHours(2).AddMinutes(30) }.ResetLabel);
+        Assert.StartsWith("resets in", new AccountInfo { ResetAt = DateTimeOffset.UtcNow.AddMinutes(30) }.ResetLabel);
+    }
+
+    [Fact]
+    public void Subtitle_CombinesStateAndBothWindows()
     {
         var account = new AccountInfo
         {
             Email = "alice@example.com",
             IsActive = true,
-            RemainingPercent = 87,
-            ResetAt = DateTimeOffset.UtcNow.AddDays(2)
+            RemainingPercent = 68,
+            FiveHourPercent = 87,
+            WeeklyPercent = 68
         };
 
-        Assert.Equal("Active · kvóta 87% · reset za 2 d", account.Subtitle);
+        Assert.Equal("Active · 5hr 87% · week 68%", account.Subtitle);
         Assert.Equal("alice@example.com", account.DisplayName);
+    }
+
+    [Fact]
+    public void Subtitle_AppendsPerWindowResetWhenKnown()
+    {
+        var account = new AccountInfo
+        {
+            IsActive = false,
+            FiveHourPercent = 25,
+            WeeklyPercent = 68,
+            FiveHourResetAt = DateTimeOffset.UtcNow.AddHours(2).AddMinutes(45),
+            WeeklyResetAt = DateTimeOffset.UtcNow.AddDays(5)
+        };
+
+        Assert.StartsWith("Standby · 5hr 25% (resets 2h", account.Subtitle);
+        Assert.Contains("week 68% (resets 5d)", account.Subtitle);
     }
 
     [Fact]

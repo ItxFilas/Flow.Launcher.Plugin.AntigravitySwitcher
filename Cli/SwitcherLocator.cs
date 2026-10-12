@@ -34,7 +34,7 @@ public sealed class SwitcherLocator
         }
 
         throw new FileNotFoundException(
-            "Nástroj antigravity-account-switcher nebyl nalezen. Nainstalujte ho do PATH, nebo do WSL.");
+            "The antigravity-account-switcher tool was not found. Install it into PATH or into WSL.");
     }
 
     public void Invalidate()

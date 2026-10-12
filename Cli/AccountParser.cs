@@ -46,7 +46,11 @@ public static class AccountParser
                 Email = match.Groups["email"].Value,
                 Status = match.Groups["status"].Value,
                 IsActive = match.Groups["active"].Value == "*",
-                RemainingPercent = remaining
+                RemainingPercent = remaining,
+                // The CLI table labels its two columns DAILY / WEEKLY; the switcher's short
+                // window is the 5-hour bucket, so map the first column to the "5hr" slot.
+                FiveHourPercent = daily,
+                WeeklyPercent = weekly
             });
         }
 
@@ -64,8 +68,11 @@ public static class AccountParser
         var accounts = new List<AccountInfo>();
         foreach (var item in document.RootElement.EnumerateArray())
         {
-            var remaining = -1d;
-            DateTimeOffset? resetAt = null;
+            var fiveHour = -1d;
+            var weekly = -1d;
+            DateTimeOffset? fiveHourReset = null;
+            DateTimeOffset? weeklyReset = null;
+            DateTimeOffset? earliestReset = null;
 
             if (item.TryGetProperty("buckets", out var buckets) && buckets.ValueKind == JsonValueKind.Array)
             {
@@ -76,20 +83,32 @@ public static class AccountParser
                         ? value * 100d
                         : -1d;
 
-                    if (fraction >= 0)
+                    var reset = ReadReset(bucket);
+
+                    if (reset is { } resetValue && (earliestReset is null || resetValue < earliestReset))
                     {
-                        remaining = remaining < 0 ? fraction : Math.Min(remaining, fraction);
+                        earliestReset = resetValue;
                     }
 
-                    if (bucket.TryGetProperty("reset_time", out var resetEl) &&
-                        resetEl.ValueKind == JsonValueKind.String &&
-                        DateTimeOffset.TryParse(resetEl.GetString(), CultureInfo.InvariantCulture,
-                            DateTimeStyles.AssumeUniversal, out var parsedReset) &&
-                        parsedReset > DateTimeOffset.UnixEpoch.AddSeconds(1))
+                    if (fraction < 0)
                     {
-                        if (resetAt is null || parsedReset < resetAt)
+                        continue;
+                    }
+
+                    if (IsWeeklyWindow(bucket))
+                    {
+                        weekly = weekly < 0 ? fraction : Math.Min(weekly, fraction);
+                        if (reset is { } w && (weeklyReset is null || w < weeklyReset))
                         {
-                            resetAt = parsedReset;
+                            weeklyReset = w;
+                        }
+                    }
+                    else
+                    {
+                        fiveHour = fiveHour < 0 ? fraction : Math.Min(fiveHour, fraction);
+                        if (reset is { } f && (fiveHourReset is null || f < fiveHourReset))
+                        {
+                            fiveHourReset = f;
                         }
                     }
                 }
@@ -101,8 +120,12 @@ public static class AccountParser
                 Email = ReadString(item, "email"),
                 Status = ReadString(item, "status"),
                 IsActive = item.TryGetProperty("is_active", out var activeEl) && activeEl.ValueKind is JsonValueKind.True,
-                RemainingPercent = remaining,
-                ResetAt = resetAt
+                RemainingPercent = WorstKnown(fiveHour, weekly),
+                ResetAt = earliestReset,
+                FiveHourPercent = fiveHour,
+                WeeklyPercent = weekly,
+                FiveHourResetAt = fiveHourReset,
+                WeeklyResetAt = weeklyReset
             });
         }
 
@@ -116,6 +139,38 @@ public static class AccountParser
                port is > 0 and <= 65535
             ? port
             : null;
+    }
+
+    private static bool IsWeeklyWindow(JsonElement bucket)
+    {
+        var window = ReadString(bucket, "window");
+        if (window.Contains("week", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var id = ReadString(bucket, "bucket_id");
+        return id.Contains("week", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static DateTimeOffset? ReadReset(JsonElement bucket)
+    {
+        if (bucket.TryGetProperty("reset_time", out var resetEl) &&
+            resetEl.ValueKind == JsonValueKind.String &&
+            DateTimeOffset.TryParse(resetEl.GetString(), CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal, out var parsed) &&
+            parsed > DateTimeOffset.UnixEpoch.AddSeconds(1))
+        {
+            return parsed;
+        }
+
+        return null;
+    }
+
+    private static double WorstKnown(double fiveHour, double weekly)
+    {
+        var values = new[] { fiveHour, weekly }.Where(v => v >= 0).ToList();
+        return values.Count == 0 ? -1 : values.Min();
     }
 
     private static string ReadString(JsonElement element, string name) =>

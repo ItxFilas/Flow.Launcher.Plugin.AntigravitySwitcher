@@ -6,8 +6,22 @@ public sealed class AccountInfo
     public string Email { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
     public bool IsActive { get; init; }
+
+    /// <summary>Worst usable quota across all buckets (-1 when unknown). Used for ordering/quick-switch.</summary>
     public double RemainingPercent { get; init; }
+
+    /// <summary>Earliest upcoming reset across all buckets (used for the "next reset" label).</summary>
     public DateTimeOffset? ResetAt { get; init; }
+
+    /// <summary>Worst remaining quota in the short 5-hour window (-1 when unknown).</summary>
+    public double FiveHourPercent { get; init; } = -1;
+
+    /// <summary>Worst remaining quota in the weekly window (-1 when unknown).</summary>
+    public double WeeklyPercent { get; init; } = -1;
+
+    public DateTimeOffset? FiveHourResetAt { get; init; }
+
+    public DateTimeOffset? WeeklyResetAt { get; init; }
 
     public string DisplayName => string.IsNullOrWhiteSpace(Email) ? Id : Email;
 
@@ -41,7 +55,11 @@ public sealed class AccountInfo
         }
     }
 
-    public string RemainingLabel => RemainingPercent < 0 ? "N/A" : $"{RemainingPercent:0}%";
+    public string RemainingLabel => FormatPercent(RemainingPercent);
+
+    public string FiveHourLabel => FormatPercent(FiveHourPercent);
+
+    public string WeeklyLabel => FormatPercent(WeeklyPercent);
 
     public string ResetLabel
     {
@@ -49,30 +67,59 @@ public sealed class AccountInfo
         {
             if (ResetAt is null)
             {
-                return "reset neznámý";
+                return "reset unknown";
             }
 
             var remaining = ResetAt.Value - DateTimeOffset.UtcNow;
             if (remaining <= TimeSpan.Zero)
             {
-                return "reset teď";
+                return "reset now";
             }
 
             if (remaining.TotalHours >= 24)
             {
-                return $"reset za {remaining.TotalDays:0} d";
+                return $"resets in {remaining.TotalDays:0}d";
             }
 
             if (remaining.TotalHours >= 1)
             {
-                return $"reset za {remaining.Hours}h {remaining.Minutes:00}m";
+                return $"resets in {remaining.Hours}h {remaining.Minutes:00}m";
             }
 
-            return $"reset za {remaining.Minutes}m";
+            return $"resets in {remaining.Minutes}m";
         }
     }
 
-    public string Subtitle => $"{StateLabel} · kvóta {RemainingLabel} · {ResetLabel}";
+    public string Subtitle =>
+        $"{StateLabel} · 5hr {FiveHourLabel}{ResetSuffix(FiveHourResetAt)} · week {WeeklyLabel}{ResetSuffix(WeeklyResetAt)}";
+
+    private static string FormatPercent(double percent) => percent < 0 ? "N/A" : $"{percent:0}%";
+
+    private static string ResetSuffix(DateTimeOffset? resetAt)
+    {
+        if (resetAt is null)
+        {
+            return string.Empty;
+        }
+
+        var remaining = resetAt.Value - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero)
+        {
+            return " (resets now)";
+        }
+
+        if (remaining.TotalHours >= 24)
+        {
+            return $" (resets {remaining.TotalDays:0}d)";
+        }
+
+        if (remaining.TotalHours >= 1)
+        {
+            return $" (resets {remaining.Hours}h{remaining.Minutes:00}m)";
+        }
+
+        return $" (resets {remaining.Minutes}m)";
+    }
 }
 
 public enum ResultKind

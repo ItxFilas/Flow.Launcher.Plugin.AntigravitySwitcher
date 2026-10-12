@@ -33,7 +33,7 @@ public sealed class CliRunner
         using var process = new Process { StartInfo = start, EnableRaisingEvents = true };
         if (!process.Start())
         {
-            throw new InvalidOperationException($"Nepodařilo se spustit {target.FileName}.");
+            throw new InvalidOperationException($"Failed to start {target.FileName}.");
         }
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
@@ -48,7 +48,7 @@ public sealed class CliRunner
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             TryKill(process);
-            throw new TimeoutException($"Příkaz '{argumentLine}' překročil časový limit.");
+            throw new TimeoutException($"Command '{argumentLine}' timed out.");
         }
 
         var stdout = await stdoutTask.ConfigureAwait(false);
@@ -72,7 +72,7 @@ public sealed class CliRunner
         var process = Process.Start(start);
         if (process is null)
         {
-            throw new InvalidOperationException($"Nepodařilo se spustit {target.FileName}.");
+            throw new InvalidOperationException($"Failed to start {target.FileName}.");
         }
 
         process.EnableRaisingEvents = true;
