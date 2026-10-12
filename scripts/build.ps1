@@ -40,6 +40,13 @@ Write-Host "Publish completed: $OutputDirectory"
 
 if ($Deploy) {
     $target = Join-Path $env:APPDATA "FlowLauncher\Plugins\$PluginFolderName"
+
+    # Flow Launcher keeps loaded plugin assemblies locked; refuse to deploy while it is running.
+    $flow = Get-Process -Name 'Flow.Launcher' -ErrorAction SilentlyContinue
+    if ($flow -and (Test-Path -LiteralPath $target)) {
+        throw "Flow Launcher is running (PID: $($flow.Id -join ', ')) and will lock the plugin DLL. Close it first, then re-run this script."
+    }
+
     Write-Host "Deploying to $target"
 
     if (Test-Path -LiteralPath $target) {

@@ -1,10 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0-windows10.0.19041</TargetFramework>
+    <TargetFramework>net7.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
-    <UseWPF>false</UseWPF>
+    <UseWPF>true</UseWPF>
     <UseWindowsForms>false</UseWindowsForms>
     <AssemblyName>Flow.Launcher.Plugin.AntigravitySwitcher</AssemblyName>
     <RootNamespace>Flow.Launcher.Plugin.AntigravitySwitcher</RootNamespace>
@@ -25,7 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Flow.Launcher.Plugin" Version="5.3.2">
+    <PackageReference Include="Flow.Launcher.Plugin" Version="4.7.0">
       <PrivateAssets>all</PrivateAssets>
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>

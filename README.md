@@ -28,6 +28,9 @@ Switcher (v1.1.0) **neposkytuje** CLI příkaz `switch` ani `remove-account`. P�
 ## Požadavky
 
 - Windows s [.NET SDK 9.0+](https://dotnet.microsoft.com/download) (pro build).
+- Flow Launcher **1.20.x** (běží na .NET 7). Plugin proto cílí `net7.0-windows` a
+  `Flow.Launcher.Plugin` **4.7.0**. Pro Flow Launcher postavený na .NET 9 změň v `.csproj`
+  `TargetFramework` na `net9.0-windows` a balíček na `5.x`.
 - Nainstalovaný a nakonfigurovaný `antigravity-account-switcher`
   (binárka v `PATH`, v `%LOCALAPPDATA%\antigravity-account-switcher\` nebo v `~/.local/bin`).
 - Pro WSL režim: `wsl.exe` s nainstalovaným switcherem v distribuci.
@@ -49,6 +52,9 @@ dotnet publish .\Flow.Launcher.Plugin.AntigravitySwitcher.csproj -c Release -o .
 ```
 
 ## Nasazení do Flow Launcheru
+
+> **Než nasadíš plugin, zavři Flow Launcher** — drží načtené DLL pluginu zamčené a kopírování by selhalo.
+> Následně stačí Flow Launcher znovu spustit (načte plugin při startu).
 
 ```powershell
 # Sestaví a zkopíruje plugin do %APPDATA%\FlowLauncher\Plugins\AntigravitySwitcher
@@ -119,7 +125,7 @@ cache a logiku výběru dalšího účtu.
 ### Struktura
 
 ```
-Flow.Launcher.Plugin.AntigravitySwitcher.csproj   # hlavní plugin (net9.0-windows)
+Flow.Launcher.Plugin.AntigravitySwitcher.csproj   # hlavní plugin (net7.0-windows)
 plugin.json                                       # manifest Flow Launcheru (keyword: ag)
 Main.cs                                           # IPlugin + IContextMenu
 Cli/                                              # lokalizace binárky, spouštění CLI, dashboard API, parsery
