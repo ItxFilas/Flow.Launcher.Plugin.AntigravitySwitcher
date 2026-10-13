@@ -1,14 +1,45 @@
+using Flow.Launcher.Plugin.AntigravitySwitcher.Services;
+
 namespace Flow.Launcher.Plugin.AntigravitySwitcher.Models;
 
 public sealed class AccountInfo
 {
+    private readonly double? _remainingPercent;
+
     public string Id { get; init; } = string.Empty;
     public string Email { get; init; } = string.Empty;
     public string Status { get; init; } = string.Empty;
     public bool IsActive { get; init; }
 
     /// <summary>Worst usable quota across all buckets (-1 when unknown). Used for ordering/quick-switch.</summary>
-    public double RemainingPercent { get; init; }
+    public double RemainingPercent
+    {
+        get
+        {
+            if (_remainingPercent.HasValue)
+            {
+                return _remainingPercent.Value;
+            }
+
+            if (FiveHourPercent >= 0 && WeeklyPercent >= 0)
+            {
+                return Math.Min(FiveHourPercent, WeeklyPercent);
+            }
+
+            if (FiveHourPercent >= 0)
+            {
+                return FiveHourPercent;
+            }
+
+            if (WeeklyPercent >= 0)
+            {
+                return WeeklyPercent;
+            }
+
+            return -1;
+        }
+        init => _remainingPercent = value;
+    }
 
     /// <summary>Earliest upcoming reset across all buckets (used for the "next reset" label).</summary>
     public DateTimeOffset? ResetAt { get; init; }
@@ -55,11 +86,11 @@ public sealed class AccountInfo
         }
     }
 
-    public string RemainingLabel => FormatPercent(RemainingPercent);
+    public string RemainingLabel => AccountFormatter.FormatPercent(RemainingPercent);
 
-    public string FiveHourLabel => FormatPercent(FiveHourPercent);
+    public string FiveHourLabel => AccountFormatter.FormatPercent(FiveHourPercent);
 
-    public string WeeklyLabel => FormatPercent(WeeklyPercent);
+    public string WeeklyLabel => AccountFormatter.FormatPercent(WeeklyPercent);
 
     public string ResetLabel
     {
@@ -90,36 +121,9 @@ public sealed class AccountInfo
         }
     }
 
-    public string Subtitle =>
-        $"{StateLabel} · 5hr {FiveHourLabel}{ResetSuffix(FiveHourResetAt)} · week {WeeklyLabel}{ResetSuffix(WeeklyResetAt)}";
+    public string Title => AccountFormatter.FormatTitle(this);
 
-    private static string FormatPercent(double percent) => percent < 0 ? "N/A" : $"{percent:0}%";
-
-    private static string ResetSuffix(DateTimeOffset? resetAt)
-    {
-        if (resetAt is null)
-        {
-            return string.Empty;
-        }
-
-        var remaining = resetAt.Value - DateTimeOffset.UtcNow;
-        if (remaining <= TimeSpan.Zero)
-        {
-            return " (resets now)";
-        }
-
-        if (remaining.TotalHours >= 24)
-        {
-            return $" (resets {remaining.TotalDays:0}d)";
-        }
-
-        if (remaining.TotalHours >= 1)
-        {
-            return $" (resets {remaining.Hours}h{remaining.Minutes:00}m)";
-        }
-
-        return $" (resets {remaining.Minutes}m)";
-    }
+    public string Subtitle => AccountFormatter.FormatSubtitle(this);
 }
 
 public enum ResultKind
