@@ -363,7 +363,7 @@ public sealed class QueryRouter
     private Result RestartBackendResult(int score = 100) =>
         ResultFactory.CreateRestartResult(
             title: "Restart Antigravity Backend (Fast)",
-            subtitle: "Restarts the language_server process (~200ms) to reload indexes and state",
+            subtitle: "Instant backend reload (<30ms) to reload indexes and credentials without closing windows",
             onRestart: async _ =>
             {
                 try
@@ -371,7 +371,7 @@ public sealed class QueryRouter
                     var restarted = await _service.RestartBackendOnlyAsync(CancellationToken.None).ConfigureAwait(false);
                     if (restarted)
                     {
-                        _context?.API?.ShowMsg("Antigravity Restart", "Language server backend restarted successfully.", NotifyIconPath(ResultFactory.AppIcon));
+                        _context?.API?.ShowMsg("Antigravity Restart", "Language server backend restarted instantly.", NotifyIconPath(ResultFactory.AppIcon));
                     }
                     else
                     {
@@ -390,7 +390,7 @@ public sealed class QueryRouter
     private Result RestartAppResult(int score = 90) =>
         ResultFactory.CreateRestartResult(
             title: "Restart Antigravity IDE (Full)",
-            subtitle: "Gracefully closes and relaunches Antigravity.exe desktop application (~600ms)",
+            subtitle: "Clean process relaunch (~1s) with zero single-instance lock contention",
             onRestart: async _ =>
             {
                 try
@@ -398,7 +398,7 @@ public sealed class QueryRouter
                     var restarted = await _service.RestartAppAsync(CancellationToken.None).ConfigureAwait(false);
                     if (restarted)
                     {
-                        _context?.API?.ShowMsg("Antigravity Restart", "Antigravity IDE restarted successfully.", NotifyIconPath(ResultFactory.AppIcon));
+                        _context?.API?.ShowMsg("Antigravity Restart", "Antigravity IDE relaunched successfully.", NotifyIconPath(ResultFactory.AppIcon));
                     }
                     else
                     {

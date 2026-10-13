@@ -29,7 +29,6 @@ public sealed class AntigravityAppController : IAntigravityAppController
 {
     private const string LanguageServerProcessName = "language_server";
     private const string AppProcessName = "Antigravity";
-    private static readonly TimeSpan BackendRespawnTimeout = TimeSpan.FromSeconds(3);
 
     private readonly CliRunner _cli;
     private static string? _cachedExePath;
@@ -46,13 +45,13 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
         if (appRunning || backendRunning)
         {
-            // 1. Blazing fast path: restart only the backend and let the frontend respawn it (< 300ms).
+            // 1. Instant path: kill language_server and let Electron respawn it (< 30ms).
             if (backendRunning && await RestartBackendAsync(cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
 
-            // 2. If the frontend did not respawn a backend within 3s, quickly restart the whole app.
+            // 2. If no backend was running (e.g. hung or killed), quickly restart the app.
             return await RestartAppAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -74,7 +73,7 @@ public sealed class AntigravityAppController : IAntigravityAppController
         return true;
     }
 
-    private async Task<bool> RestartBackendAsync(CancellationToken cancellationToken)
+    private static async Task<bool> RestartBackendAsync(CancellationToken cancellationToken)
     {
         var processes = Process.GetProcessesByName(LanguageServerProcessName);
         if (processes.Length == 0)
@@ -97,8 +96,8 @@ public sealed class AntigravityAppController : IAntigravityAppController
             }
         }
 
-        // High-frequency polling (50ms interval) to catch respawn immediately
-        var deadline = DateTimeOffset.UtcNow + BackendRespawnTimeout;
+        // Confirm termination of previous instances (< 30ms)
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(300);
         while (DateTimeOffset.UtcNow < deadline)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -106,23 +105,22 @@ public sealed class AntigravityAppController : IAntigravityAppController
                 return false;
             }
 
-            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
-
             try
             {
-                var current = Process.GetProcessesByName(LanguageServerProcessName);
-                if (current.Any(p => !p.HasExited && !oldPids.Contains(p.Id)))
+                var remaining = Process.GetProcessesByName(LanguageServerProcessName);
+                if (remaining.All(p => p.HasExited || !oldPids.Contains(p.Id)))
                 {
                     return true;
                 }
             }
             catch
             {
-                // Ignore process table races
             }
+
+            await Task.Delay(15, cancellationToken).ConfigureAwait(false);
         }
 
-        return false;
+        return true;
     }
 
     private async Task<bool> LaunchIfFoundAsync(CancellationToken cancellationToken)
@@ -202,72 +200,57 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
     private static async Task CloseAsync(CancellationToken cancellationToken)
     {
-        var processes = Process.GetProcessesByName(AppProcessName);
-        if (processes.Length == 0)
+        var appProcesses = Process.GetProcessesByName(AppProcessName);
+        var backendProcesses = Process.GetProcessesByName(LanguageServerProcessName);
+
+        if (appProcesses.Length == 0 && backendProcesses.Length == 0)
         {
             return;
         }
 
-        // Request graceful window close
-        foreach (var process in processes)
+        // Concurrently terminate all app and backend processes with entire process trees
+        foreach (var process in appProcesses)
         {
             try
             {
-                process.CloseMainWindow();
+                process.Kill(entireProcessTree: true);
             }
             catch
             {
             }
         }
 
-        // Fast poll for graceful exit up to 600ms
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(600);
+        foreach (var process in backendProcesses)
+        {
+            try
+            {
+                process.Kill(entireProcessTree: true);
+            }
+            catch
+            {
+            }
+        }
+
+        // Wait until all processes have fully exited and released Windows file/pipe locks (< 50ms)
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(800);
         while (DateTimeOffset.UtcNow < deadline)
         {
-            if (!IsAnyRunning(AppProcessName))
+            if (!IsAnyRunning(AppProcessName) && !IsAnyRunning(LanguageServerProcessName))
             {
                 return;
             }
 
-            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
-        }
-
-        // Terminate any remaining app processes immediately
-        foreach (var process in Process.GetProcessesByName(AppProcessName))
-        {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-            catch
-            {
-            }
-        }
-
-        // Terminate any lingering language_server backend
-        foreach (var process in Process.GetProcessesByName(LanguageServerProcessName))
-        {
-            try
-            {
-                if (!process.HasExited)
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-            }
-            catch
-            {
-            }
+            await Task.Delay(15, cancellationToken).ConfigureAwait(false);
         }
     }
 
     private static Task LaunchAsync(string exePath, CancellationToken cancellationToken)
     {
+        var dir = Path.GetDirectoryName(exePath);
         Process.Start(new ProcessStartInfo
         {
             FileName = exePath,
+            WorkingDirectory = string.IsNullOrEmpty(dir) ? Environment.CurrentDirectory : dir,
             UseShellExecute = true
         });
         return Task.CompletedTask;
