@@ -52,21 +52,21 @@ public sealed class SwitcherLocatorTests
 
 public sealed class DashboardClientReachabilityTests
 {
-    private sealed class StubHandler : HttpMessageHandler
+    private sealed class StubAsyncHandler : HttpMessageHandler
     {
-        private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
-        public StubHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) => _responder = responder;
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _responder;
+        public StubAsyncHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder) => _responder = responder;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(_responder(request));
+            _responder(request, cancellationToken);
     }
 
     [Fact]
     public async Task IsReachableAsync_ReturnsTrue_WhenEndpointReturnsOk()
     {
-        using var client = new DashboardClient(new StubHandler(req =>
-            req.RequestUri?.AbsolutePath == "/api/status"
+        using var client = new DashboardClient(new StubAsyncHandler((req, _) =>
+            Task.FromResult(req.RequestUri?.AbsolutePath == "/api/status"
                 ? new HttpResponseMessage(HttpStatusCode.OK)
-                : new HttpResponseMessage(HttpStatusCode.NotFound)));
+                : new HttpResponseMessage(HttpStatusCode.NotFound))));
 
         var reachable = await client.IsReachableAsync(new Uri("http://127.0.0.1:8080/"));
         Assert.True(reachable);
@@ -75,8 +75,8 @@ public sealed class DashboardClientReachabilityTests
     [Fact]
     public async Task IsReachableAsync_ReturnsFalse_WhenEndpointFails()
     {
-        using var client = new DashboardClient(new StubHandler(_ =>
-            new HttpResponseMessage(HttpStatusCode.InternalServerError)));
+        using var client = new DashboardClient(new StubAsyncHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError))));
 
         var reachable = await client.IsReachableAsync(new Uri("http://127.0.0.1:8080/"));
         Assert.False(reachable);
@@ -85,13 +85,44 @@ public sealed class DashboardClientReachabilityTests
     [Fact]
     public async Task IsReachableAsync_TimesOutFast_WhenProbeExceedsTimeout()
     {
-        using var client = new DashboardClient(new StubHandler(_ =>
+        using var client = new DashboardClient(new StubAsyncHandler(async (_, token) =>
         {
-            Thread.Sleep(100);
+            await Task.Delay(100, token);
             return new HttpResponseMessage(HttpStatusCode.OK);
         }));
 
         var reachable = await client.IsReachableAsync(new Uri("http://127.0.0.1:8080/"), TimeSpan.FromMilliseconds(15));
         Assert.False(reachable);
+    }
+}
+
+public sealed class CliRunnerTimeoutTests
+{
+    [Fact]
+    public async Task RunAsync_ThrowsTimeoutException_WhenProcessExceedsTimeout()
+    {
+        var cmdPath = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+        if (!File.Exists(cmdPath))
+        {
+            return;
+        }
+
+        var prev = Environment.GetEnvironmentVariable("ANTIGRAVITY_SWITCHER_BIN");
+        try
+        {
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_SWITCHER_BIN", cmdPath);
+            var locator = new SwitcherLocator();
+            var runner = new CliRunner(locator);
+
+            // "cmd.exe /c pause" waits for stdin without closing stdout/stderr
+            await Assert.ThrowsAsync<TimeoutException>(async () =>
+            {
+                await runner.RunAsync(["/c", "pause"], timeout: TimeSpan.FromMilliseconds(100));
+            });
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_SWITCHER_BIN", prev);
+        }
     }
 }
