@@ -27,6 +27,20 @@ public sealed class Main : IAsyncPlugin, IContextMenu, IReloadable
         var runner = new CliRunner(locator);
         _service = new AccountService(runner, new DashboardClient(), new AccountCache());
         _router = new QueryRouter(_service, _context);
+
+        // Pre-warm the account cache in background on startup so the first query is instantaneous
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _service.ListAccountsAsync(forceRefresh: true).ConfigureAwait(false);
+            }
+            catch
+            {
+                // Ignored: first user query will retry if needed
+            }
+        });
+
         return Task.CompletedTask;
     }
 

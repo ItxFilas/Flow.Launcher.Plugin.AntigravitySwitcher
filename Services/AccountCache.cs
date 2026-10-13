@@ -11,7 +11,7 @@ public sealed class AccountCache
 
     public AccountCache(TimeSpan? ttl = null)
     {
-        _ttl = ttl ?? TimeSpan.FromSeconds(8);
+        _ttl = ttl ?? TimeSpan.FromSeconds(30);
     }
 
     public bool TryGet(out IReadOnlyList<AccountInfo> accounts)

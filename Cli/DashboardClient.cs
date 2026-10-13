@@ -9,7 +9,7 @@ public sealed class DashboardClient : IDisposable
 
     public DashboardClient(HttpMessageHandler? handler = null)
     {
-        _http = new HttpClient(handler ?? new HttpClientHandler())
+        _http = new HttpClient(handler ?? new HttpClientHandler { UseProxy = false })
         {
             Timeout = TimeSpan.FromSeconds(3)
         };

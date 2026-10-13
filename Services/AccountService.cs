@@ -215,7 +215,7 @@ public sealed class AccountService
 
     private async Task<Uri?> ResolveApiUriInternalAsync(CancellationToken cancellationToken)
     {
-        if (_dashboardPort is int cached && DateTimeOffset.UtcNow - _portCachedAt < TimeSpan.FromSeconds(30))
+        if (_dashboardPort is int cached && DateTimeOffset.UtcNow - _portCachedAt < TimeSpan.FromMinutes(5))
         {
             var cachedUri = new Uri($"http://127.0.0.1:{cached}/");
             if (await _dashboard.IsReachableAsync(cachedUri, cancellationToken).ConfigureAwait(false))
@@ -224,31 +224,19 @@ public sealed class AccountService
             }
         }
 
-        var ports = new List<int>();
+        // Fast path: Probe environment override or default port 8080 first (< 2ms) without spawning a child process
+        var quickPorts = new List<int>();
         if (int.TryParse(Environment.GetEnvironmentVariable("ANTIGRAVITY_PORT"), out var envPort) && envPort is > 0 and <= 65535)
         {
-            ports.Add(envPort);
+            quickPorts.Add(envPort);
         }
 
-        try
+        if (!quickPorts.Contains(8080))
         {
-            var result = await _cli.RunAsync(["config", "get", "port"], TimeSpan.FromSeconds(6), cancellationToken).ConfigureAwait(false);
-            var parsed = AccountParser.ParseConfigPort(result.StdOut);
-            if (parsed is int port && !ports.Contains(port))
-            {
-                ports.Add(port);
-            }
-        }
-        catch
-        {
+            quickPorts.Add(8080);
         }
 
-        if (!ports.Contains(8080))
-        {
-            ports.Add(8080);
-        }
-
-        foreach (var port in ports)
+        foreach (var port in quickPorts)
         {
             var uri = new Uri($"http://127.0.0.1:{port}/");
             if (await _dashboard.IsReachableAsync(uri, cancellationToken).ConfigureAwait(false))
@@ -258,6 +246,27 @@ public sealed class AccountService
                 return uri;
             }
         }
+
+        // Slow fallback: Only if 8080 and envPort are not reachable, ask switcher config for a custom port
+        try
+        {
+            var result = await _cli.RunAsync(["config", "get", "port"], TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
+            var parsed = AccountParser.ParseConfigPort(result.StdOut);
+            if (parsed is int customPort && !quickPorts.Contains(customPort))
+            {
+                var customUri = new Uri($"http://127.0.0.1:{customPort}/");
+                if (await _dashboard.IsReachableAsync(customUri, cancellationToken).ConfigureAwait(false))
+                {
+                    _dashboardPort = customPort;
+                    _portCachedAt = DateTimeOffset.UtcNow;
+                    return customUri;
+                }
+            }
+        }
+        catch
+        {
+        }
+
         return null;
     }
     private Task<Uri?> ResolveDashboardUriAsync(CancellationToken cancellationToken) => ResolveApiUriInternalAsync(cancellationToken);

@@ -367,7 +367,10 @@ public sealed class QueryRouter
             return false;
         });
 
-    private List<Result> CommandHints() =>
+    private List<Result>? _commandHints;
+    private List<Result>? _helpResults;
+
+    private List<Result> CommandHints() => _commandHints ??=
     [
         Hint("ag add", "Add account (OAuth)", ResultFactory.AddIcon),
         Hint("ag remove", "Remove account", ResultFactory.RemoveIcon),
@@ -375,7 +378,7 @@ public sealed class QueryRouter
         Hint("ag restart", "Restart language server", ResultFactory.AppIcon)
     ];
 
-    private List<Result> HelpResults() =>
+    private List<Result> HelpResults() => _helpResults ??=
     [
         Hint("ag", "List accounts and quick switch", ResultFactory.AppIcon),
         Hint("ag add", "Add Google account", ResultFactory.AddIcon),
