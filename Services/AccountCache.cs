@@ -16,16 +16,29 @@ public sealed class AccountCache
 
     public bool TryGet(out IReadOnlyList<AccountInfo> accounts)
     {
+        if (TryGet(out accounts, out var isStale) && !isStale)
+        {
+            return true;
+        }
+
+        accounts = [];
+        return false;
+    }
+
+    public bool TryGet(out IReadOnlyList<AccountInfo> accounts, out bool isStale)
+    {
         lock (_gate)
         {
-            if (_accounts is not null && DateTimeOffset.UtcNow < _expiresAt)
+            if (_accounts is not null)
             {
                 accounts = _accounts;
+                isStale = DateTimeOffset.UtcNow >= _expiresAt;
                 return true;
             }
         }
 
         accounts = [];
+        isStale = false;
         return false;
     }
 

@@ -22,6 +22,10 @@ public sealed class AccountService
 
     public bool TryGetCached(out IReadOnlyList<AccountInfo> accounts) => _cache.TryGet(out accounts);
 
+    public bool TryGetCached(out IReadOnlyList<AccountInfo> accounts, out bool isStale) => _cache.TryGet(out accounts, out isStale);
+
+    public void InvalidateCache() => _cache.Invalidate();
+
     public async Task<IReadOnlyList<AccountInfo>> ListAccountsAsync(bool forceRefresh = false, CancellationToken cancellationToken = default)
     {
         if (!forceRefresh && _cache.TryGet(out var cached))
@@ -81,6 +85,11 @@ public sealed class AccountService
         }
 
         _cache.Invalidate();
+    }
+
+    public async Task<bool> RestartBackendOnlyAsync(CancellationToken cancellationToken = default)
+    {
+        return await _antigravityApp.RestartForLoginSwapAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public void StartAddAccount()

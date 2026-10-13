@@ -101,6 +101,45 @@ public sealed class AccountServiceTests
         Assert.Equal(1, controller.RestartCalls);
     }
 
+    [Fact]
+    public async Task RestartBackendOnlyAsync_DelegatesToAntigravityAppController()
+    {
+        var controller = new StubAppController { AppliesSwap = true };
+        var service = CreateService(
+            new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.OK))),
+            controller);
+
+        var result = await service.RestartBackendOnlyAsync();
+
+        Assert.True(result);
+        Assert.Equal(1, controller.RestartCalls);
+    }
+
+    [Fact]
+    public void TryGetCached_WithStaleFlag_And_InvalidateCache_DelegateToCache()
+    {
+        var cache = new AccountCache();
+        var service = new AccountService(
+            new CliRunner(new SwitcherLocator()),
+            new DashboardClient(),
+            cache,
+            new StubAppController());
+
+        Assert.False(service.TryGetCached(out var initial, out var initialStale));
+        Assert.Empty(initial);
+        Assert.False(initialStale);
+
+        var sample = new List<AccountInfo> { new() { Id = "test-1", Email = "test@example.com" } };
+        cache.Set(sample);
+
+        Assert.True(service.TryGetCached(out var cached, out var isStale));
+        Assert.Same(sample, cached);
+        Assert.False(isStale);
+
+        service.InvalidateCache();
+        Assert.False(service.TryGetCached(out _, out _));
+    }
+
     private static AccountService CreateService(DashboardClient dashboard, IAntigravityAppController controller)
     {
         // The real locator is fine: ANTIGRAVITY_PORT makes the dashboard probe prefer the env port,

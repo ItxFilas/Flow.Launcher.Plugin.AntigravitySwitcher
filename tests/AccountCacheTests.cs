@@ -52,4 +52,51 @@ public sealed class AccountCacheTests
 
         Assert.False(cache.TryGet(out _));
     }
+
+    [Fact]
+    public void TryGet_WithStaleFlag_ReturnsFalseBeforeAnySet()
+    {
+        var cache = new AccountCache();
+
+        Assert.False(cache.TryGet(out var accounts, out var isStale));
+        Assert.Empty(accounts);
+        Assert.False(isStale);
+    }
+
+    [Fact]
+    public void TryGet_WithStaleFlag_ReturnsFreshWhenWithinTtl()
+    {
+        var cache = new AccountCache();
+        cache.Set(Sample);
+
+        Assert.True(cache.TryGet(out var accounts, out var isStale));
+        Assert.Same(Sample, accounts);
+        Assert.False(isStale);
+    }
+
+    [Fact]
+    public async Task TryGet_WithStaleFlag_ReturnsStaleWhenTtlExpired()
+    {
+        var cache = new AccountCache(TimeSpan.FromMilliseconds(30));
+        cache.Set(Sample);
+
+        await Task.Delay(150);
+
+        Assert.True(cache.TryGet(out var accounts, out var isStale));
+        Assert.Same(Sample, accounts);
+        Assert.True(isStale);
+    }
+
+    [Fact]
+    public void TryGet_WithStaleFlag_ReturnsFalseAfterInvalidate()
+    {
+        var cache = new AccountCache();
+        cache.Set(Sample);
+
+        cache.Invalidate();
+
+        Assert.False(cache.TryGet(out var accounts, out var isStale));
+        Assert.Empty(accounts);
+        Assert.False(isStale);
+    }
 }
