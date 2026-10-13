@@ -20,11 +20,19 @@ public sealed class DashboardClient : IDisposable
         _http.Dispose();
     }
 
-    public async Task<bool> IsReachableAsync(Uri baseUri, CancellationToken cancellationToken = default)
+    public static readonly TimeSpan FastProbeTimeout = TimeSpan.FromMilliseconds(350);
+
+    public Task<bool> IsReachableAsync(Uri baseUri, CancellationToken cancellationToken = default) =>
+        IsReachableAsync(baseUri, FastProbeTimeout, cancellationToken);
+
+    public async Task<bool> IsReachableAsync(Uri baseUri, TimeSpan timeout, CancellationToken cancellationToken = default)
     {
+        using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probeCts.CancelAfter(timeout);
+
         try
         {
-            using var response = await _http.GetAsync(new Uri(baseUri, "/api/status"), cancellationToken).ConfigureAwait(false);
+            using var response = await _http.GetAsync(new Uri(baseUri, "/api/status"), probeCts.Token).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
         catch

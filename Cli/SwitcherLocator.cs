@@ -11,6 +11,11 @@ public sealed class SwitcherLocator
     private DateTimeOffset _cachedAt;
     private static readonly TimeSpan CacheTtl = TimeSpan.FromMinutes(2);
 
+    private static bool? s_hasWslCached;
+    private static DateTimeOffset s_hasWslCachedAt;
+    private static readonly TimeSpan WslCacheTtl = TimeSpan.FromMinutes(10);
+    private static readonly object s_wslGate = new();
+
     public SwitcherTarget Resolve()
     {
         if (_cached is not null && DateTimeOffset.UtcNow - _cachedAt < CacheTtl)
@@ -40,6 +45,15 @@ public sealed class SwitcherLocator
     public void Invalidate()
     {
         _cached = null;
+        InvalidateWslCache();
+    }
+
+    internal static void InvalidateWslCache()
+    {
+        lock (s_wslGate)
+        {
+            s_hasWslCached = null;
+        }
     }
 
     private static SwitcherTarget? ResolveNative()
@@ -71,39 +85,83 @@ public sealed class SwitcherLocator
         return fromPath is null ? null : new SwitcherTarget(ExecutionMode.Native, fromPath, string.Empty);
     }
 
-    private static string? FindOnPath(string fileName)
+    internal static string? FindOnPath(string fileName)
     {
-        try
-        {
-            var start = new ProcessStartInfo
-            {
-                FileName = "where.exe",
-                Arguments = fileName,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            using var process = Process.Start(start);
-            if (process is null)
-            {
-                return null;
-            }
-
-            var output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit(1500);
-            var first = output.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-            return !string.IsNullOrWhiteSpace(first) && File.Exists(first) ? first : null;
-        }
-        catch
+        if (string.IsNullOrWhiteSpace(fileName))
         {
             return null;
         }
+
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathEnv))
+        {
+            return null;
+        }
+
+        var extensions = Environment.OSVersion.Platform == PlatformID.Win32NT
+            ? (Environment.GetEnvironmentVariable("PATHEXT")?.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) ?? [".EXE", ".CMD", ".BAT"])
+            : [""];
+
+        foreach (var rawDir in pathEnv.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            try
+            {
+                var dir = rawDir.Trim('\"');
+                if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+                {
+                    continue;
+                }
+
+                var exact = Path.Combine(dir, fileName);
+                if (File.Exists(exact))
+                {
+                    return exact;
+                }
+
+                if (!Path.HasExtension(fileName))
+                {
+                    foreach (var ext in extensions)
+                    {
+                        var formattedExt = ext.StartsWith('.') ? ext : "." + ext;
+                        var candidate = Path.Combine(dir, fileName + formattedExt);
+                        if (File.Exists(candidate))
+                        {
+                            return candidate;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore directory permission or invalid path issues
+            }
+        }
+
+        return null;
     }
 
-    private static bool HasWsl()
+    internal static bool HasWsl()
     {
+        lock (s_wslGate)
+        {
+            if (s_hasWslCached.HasValue && DateTimeOffset.UtcNow - s_hasWslCachedAt < WslCacheTtl)
+            {
+                return s_hasWslCached.Value;
+            }
+
+            s_hasWslCached = ProbeWsl();
+            s_hasWslCachedAt = DateTimeOffset.UtcNow;
+            return s_hasWslCached.Value;
+        }
+    }
+
+    private static bool ProbeWsl()
+    {
+        if (FindOnPath("wsl.exe") is null)
+        {
+            return false;
+        }
+
         try
         {
             var start = new ProcessStartInfo
@@ -122,7 +180,7 @@ public sealed class SwitcherLocator
                 return false;
             }
 
-            return process.WaitForExit(2000) && process.ExitCode == 0;
+            return process.WaitForExit(1500) && process.ExitCode == 0;
         }
         catch
         {
