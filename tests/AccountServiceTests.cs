@@ -38,10 +38,17 @@ public sealed class AccountServiceTests
     {
         public bool AppliesSwap { get; init; } = true;
         public int RestartCalls { get; private set; }
+        public int RestartAppCalls { get; private set; }
 
         public Task<bool> RestartForLoginSwapAsync(CancellationToken cancellationToken = default)
         {
             RestartCalls++;
+            return Task.FromResult(AppliesSwap);
+        }
+
+        public Task<bool> RestartAppAsync(CancellationToken cancellationToken = default)
+        {
+            RestartAppCalls++;
             return Task.FromResult(AppliesSwap);
         }
     }
@@ -113,6 +120,20 @@ public sealed class AccountServiceTests
 
         Assert.True(result);
         Assert.Equal(1, controller.RestartCalls);
+    }
+
+    [Fact]
+    public async Task RestartAppAsync_DelegatesToAntigravityAppController()
+    {
+        var controller = new StubAppController { AppliesSwap = true };
+        var service = CreateService(
+            new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.OK))),
+            controller);
+
+        var result = await service.RestartAppAsync();
+
+        Assert.True(result);
+        Assert.Equal(1, controller.RestartAppCalls);
     }
 
     [Fact]

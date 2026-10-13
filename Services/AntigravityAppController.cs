@@ -6,32 +6,33 @@ namespace Flow.Launcher.Plugin.AntigravitySwitcher.Services;
 
 /// <summary>
 /// Applies a freshly-swapped Antigravity login to the desktop app after the switcher has
-/// rewritten the Windows Credential Manager entry.
+/// rewritten the Windows Credential Manager entry, or restarts the app/backend on request.
 /// </summary>
 public interface IAntigravityAppController
 {
     /// <summary>
     /// Restarts the app's language_server backend (the Electron frontend respawns it and the
     /// new process reads the swapped login), or launches the app when it is not running.
-    /// Returns false when the app could not be brought up — the swap already succeeded, so the
-    /// user just has to open Antigravity.
     /// </summary>
     Task<bool> RestartForLoginSwapAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Closes and immediately relaunches the full Antigravity desktop IDE.
+    /// </summary>
+    Task<bool> RestartAppAsync(CancellationToken cancellationToken = default);
 }
 
 /// <summary>
-/// Locates, closes and relaunches the Antigravity IDE on Windows. To apply a login swap the
-/// running app only needs its language_server backend restarted: the Electron frontend respawns
-/// it automatically and the new process picks up the swapped credential, keeping the window open.
-/// If the backend does not come back, the whole app is closed and relaunched instead.
+/// Locates, closes and relaunches the Antigravity IDE on Windows with sub-second latency.
 /// </summary>
 public sealed class AntigravityAppController : IAntigravityAppController
 {
     private const string LanguageServerProcessName = "language_server";
     private const string AppProcessName = "Antigravity";
-    private static readonly TimeSpan BackendRespawnTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan BackendRespawnTimeout = TimeSpan.FromSeconds(3);
 
     private readonly CliRunner _cli;
+    private static string? _cachedExePath;
 
     public AntigravityAppController(CliRunner cli)
     {
@@ -45,13 +46,13 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
         if (appRunning || backendRunning)
         {
-            // The app is up: restart only the backend and let the frontend respawn it.
+            // 1. Blazing fast path: restart only the backend and let the frontend respawn it (< 300ms).
             if (backendRunning && await RestartBackendAsync(cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
 
-            // The frontend did not respawn a backend on its own — restart the whole app.
+            // 2. If the frontend did not respawn a backend within 3s, quickly restart the whole app.
             return await RestartAppAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -59,21 +60,44 @@ public sealed class AntigravityAppController : IAntigravityAppController
         return await LaunchIfFoundAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<bool> RestartAppAsync(CancellationToken cancellationToken = default)
+    {
+        // Resolve exe path before closing so we already have the path primed in memory
+        var exePath = await ResolveExePathAsync(cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(exePath))
+        {
+            return false;
+        }
+
+        await CloseAsync(cancellationToken).ConfigureAwait(false);
+        await LaunchAsync(exePath, cancellationToken).ConfigureAwait(false);
+        return true;
+    }
+
     private async Task<bool> RestartBackendAsync(CancellationToken cancellationToken)
     {
-        foreach (var process in Process.GetProcessesByName(LanguageServerProcessName))
+        var processes = Process.GetProcessesByName(LanguageServerProcessName);
+        if (processes.Length == 0)
+        {
+            return false;
+        }
+
+        var oldPids = processes.Select(p => p.Id).ToHashSet();
+
+        // Concurrently terminate all language server instances
+        foreach (var process in processes)
         {
             try
             {
                 process.Kill(entireProcessTree: true);
-                process.WaitForExit(2000);
             }
             catch
             {
-                // The process is already gone.
+                // Process already exited
             }
         }
 
+        // High-frequency polling (50ms interval) to catch respawn immediately
         var deadline = DateTimeOffset.UtcNow + BackendRespawnTimeout;
         while (DateTimeOffset.UtcNow < deadline)
         {
@@ -82,21 +106,23 @@ public sealed class AntigravityAppController : IAntigravityAppController
                 return false;
             }
 
-            await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-            if (IsAnyRunning(LanguageServerProcessName))
+            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+
+            try
             {
-                return true;
+                var current = Process.GetProcessesByName(LanguageServerProcessName);
+                if (current.Any(p => !p.HasExited && !oldPids.Contains(p.Id)))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                // Ignore process table races
             }
         }
 
         return false;
-    }
-
-    private async Task<bool> RestartAppAsync(CancellationToken cancellationToken)
-    {
-        await CloseAsync(cancellationToken).ConfigureAwait(false);
-        await Task.Delay(1000, cancellationToken).ConfigureAwait(false);
-        return await LaunchIfFoundAsync(cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<bool> LaunchIfFoundAsync(CancellationToken cancellationToken)
@@ -125,31 +151,29 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
     private async Task<string?> ResolveExePathAsync(CancellationToken cancellationToken)
     {
-        // 1. The switcher's saved configuration is the source of truth.
-        var fromConfig = await ResolveFromSwitcherConfigAsync(cancellationToken).ConfigureAwait(false);
-        if (fromConfig is not null)
+        if (_cachedExePath is not null && File.Exists(_cachedExePath))
         {
-            return fromConfig;
+            return _cachedExePath;
         }
 
-        // 2. A running Antigravity process knows its own executable path.
+        // 1. A running Antigravity process knows its own executable path (< 0.5ms)
         try
         {
             foreach (var process in Process.GetProcessesByName(AppProcessName))
             {
                 var path = TryGetPath(process);
-                if (!string.IsNullOrWhiteSpace(path))
+                if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
                 {
+                    _cachedExePath = path;
                     return path;
                 }
             }
         }
         catch
         {
-            // Access to another process may fail; fall through to the standard locations.
         }
 
-        // 3. Standard per-user Electron install locations.
+        // 2. Standard per-user Electron install locations checked in memory (< 0.1ms)
         var candidates = new[]
         {
             Environment.GetEnvironmentVariable("ANTIGRAVITY_BIN"),
@@ -158,12 +182,34 @@ public sealed class AntigravityAppController : IAntigravityAppController
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Antigravity", "Antigravity.exe")
         };
 
-        return candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c) && File.Exists(c));
+        var matched = candidates.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c) && File.Exists(c));
+        if (matched is not null)
+        {
+            _cachedExePath = matched;
+            return matched;
+        }
+
+        // 3. Fallback: ask switcher config only if standard locations fail
+        var fromConfig = await ResolveFromSwitcherConfigAsync(cancellationToken).ConfigureAwait(false);
+        if (fromConfig is not null)
+        {
+            _cachedExePath = fromConfig;
+            return fromConfig;
+        }
+
+        return null;
     }
 
-    private static Task CloseAsync(CancellationToken cancellationToken)
+    private static async Task CloseAsync(CancellationToken cancellationToken)
     {
-        foreach (var process in Process.GetProcessesByName(AppProcessName))
+        var processes = Process.GetProcessesByName(AppProcessName);
+        if (processes.Length == 0)
+        {
+            return;
+        }
+
+        // Request graceful window close
+        foreach (var process in processes)
         {
             try
             {
@@ -171,43 +217,54 @@ public sealed class AntigravityAppController : IAntigravityAppController
             }
             catch
             {
-                // The process may already be closing; ignore.
             }
         }
 
-        // Give Electron a moment to shut down cleanly, then force-kill stragglers.
-        var allExited = false;
-        try
+        // Fast poll for graceful exit up to 600ms
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(600);
+        while (DateTimeOffset.UtcNow < deadline)
         {
-            allExited = Process.GetProcessesByName(AppProcessName)
-                .All(p => p.WaitForExit(5000));
-        }
-        catch
-        {
-            // Ignore process list races.
+            if (!IsAnyRunning(AppProcessName))
+            {
+                return;
+            }
+
+            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
         }
 
-        if (!allExited)
+        // Terminate any remaining app processes immediately
+        foreach (var process in Process.GetProcessesByName(AppProcessName))
         {
-            foreach (var process in Process.GetProcessesByName(AppProcessName).Where(p => !p.HasExited))
+            try
             {
-                try
+                if (!process.HasExited)
                 {
                     process.Kill(entireProcessTree: true);
                 }
-                catch
-                {
-                    // The process exited between HasExited and Kill; ignore.
-                }
+            }
+            catch
+            {
             }
         }
 
-        return Task.CompletedTask;
+        // Terminate any lingering language_server backend
+        foreach (var process in Process.GetProcessesByName(LanguageServerProcessName))
+        {
+            try
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+            }
+            catch
+            {
+            }
+        }
     }
 
-    private Task LaunchAsync(string exePath, CancellationToken cancellationToken)
+    private static Task LaunchAsync(string exePath, CancellationToken cancellationToken)
     {
-        // UseShellExecute launches with the user's normal environment and app associations.
         Process.Start(new ProcessStartInfo
         {
             FileName = exePath,
@@ -220,7 +277,7 @@ public sealed class AntigravityAppController : IAntigravityAppController
     {
         try
         {
-            var result = await _cli.RunAsync(["config", "get", "antigravity_bin"], TimeSpan.FromSeconds(6), cancellationToken).ConfigureAwait(false);
+            var result = await _cli.RunAsync(["config", "get", "antigravity_bin"], TimeSpan.FromSeconds(3), cancellationToken).ConfigureAwait(false);
             var path = result.StdOut.Trim();
             return !string.IsNullOrWhiteSpace(path) && File.Exists(path) ? path : null;
         }

@@ -92,6 +92,11 @@ public sealed class AccountService
         return await _antigravityApp.RestartForLoginSwapAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    public async Task<bool> RestartAppAsync(CancellationToken cancellationToken = default)
+    {
+        return await _antigravityApp.RestartAppAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public void StartAddAccount()
     {
         _cli.StartDetached(["add-account"]);

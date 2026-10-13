@@ -184,8 +184,17 @@ public sealed class QueryRouterTests
 
         // Restart command via Query object
         var restartResults = await router.RouteAsync(CreateQuery("restart"));
-        Assert.Single(restartResults);
-        Assert.Equal("Restart Antigravity Language Server", restartResults[0].Title);
+        Assert.Equal(2, restartResults.Count);
+        Assert.Equal("Restart Antigravity Backend (Fast)", restartResults[0].Title);
+        Assert.Equal("Restart Antigravity IDE (Full)", restartResults[1].Title);
+
+        var restartAppResults = await router.RouteAsync(CreateQuery("restart app"));
+        Assert.Equal(2, restartAppResults.Count);
+        Assert.Equal("Restart Antigravity IDE (Full)", restartAppResults[0].Title);
+
+        var restartBackendResults = await router.RouteAsync(CreateQuery("restart backend"));
+        Assert.Equal(2, restartBackendResults.Count);
+        Assert.Equal("Restart Antigravity Backend (Fast)", restartBackendResults[0].Title);
 
         // Refresh command
         var refreshResults = await router.RouteAsync("refresh");

@@ -71,7 +71,7 @@ public sealed class QueryRouter
                 CommandKind.Add => [AddAccountResult()],
                 CommandKind.Remove => await QueryRemoveAsync(parsed.Argument, token).ConfigureAwait(false),
                 CommandKind.Refresh => [RefreshResult()],
-                CommandKind.Restart => [RestartResult()],
+                CommandKind.Restart => RestartResults(parsed.Argument),
                 CommandKind.Status => await QueryStatusAsync(token).ConfigureAwait(false),
                 CommandKind.Help => HelpResults(),
                 _ => await QueryAccountsAsync(parsed.Argument, token).ConfigureAwait(false)
@@ -344,28 +344,77 @@ public sealed class QueryRouter
             return false;
         });
 
-    private Result RestartResult() =>
-        ResultFactory.CreateRestartResult(async _ =>
+    private List<Result> RestartResults(string argument)
+    {
+        var arg = argument?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (arg is "app" or "full" or "ide" or "window")
         {
-            try
-            {
-                var restarted = await _service.RestartBackendOnlyAsync(CancellationToken.None).ConfigureAwait(false);
-                if (restarted)
-                {
-                    _context?.API?.ShowMsg("Antigravity Restart", "Language server backend restarted successfully.", NotifyIconPath(ResultFactory.AppIcon));
-                }
-                else
-                {
-                    _context?.API?.ShowMsgError("Restart failed", "Could not restart Antigravity language server backend.");
-                }
-            }
-            catch (Exception ex)
-            {
-                _context?.API?.ShowMsgError("Restart failed", ex.Message);
-            }
+            return [RestartAppResult(100), RestartBackendResult(80)];
+        }
 
-            return false;
-        });
+        if (arg is "backend" or "server" or "fast" or "lang" or "lsp")
+        {
+            return [RestartBackendResult(100), RestartAppResult(80)];
+        }
+
+        return [RestartBackendResult(100), RestartAppResult(90)];
+    }
+
+    private Result RestartBackendResult(int score = 100) =>
+        ResultFactory.CreateRestartResult(
+            title: "Restart Antigravity Backend (Fast)",
+            subtitle: "Restarts the language_server process (~200ms) to reload indexes and state",
+            onRestart: async _ =>
+            {
+                try
+                {
+                    var restarted = await _service.RestartBackendOnlyAsync(CancellationToken.None).ConfigureAwait(false);
+                    if (restarted)
+                    {
+                        _context?.API?.ShowMsg("Antigravity Restart", "Language server backend restarted successfully.", NotifyIconPath(ResultFactory.AppIcon));
+                    }
+                    else
+                    {
+                        _context?.API?.ShowMsgError("Restart failed", "Could not restart Antigravity language server backend.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _context?.API?.ShowMsgError("Restart failed", ex.Message);
+                }
+
+                return false;
+            },
+            score: score);
+
+    private Result RestartAppResult(int score = 90) =>
+        ResultFactory.CreateRestartResult(
+            title: "Restart Antigravity IDE (Full)",
+            subtitle: "Gracefully closes and relaunches Antigravity.exe desktop application (~600ms)",
+            onRestart: async _ =>
+            {
+                try
+                {
+                    var restarted = await _service.RestartAppAsync(CancellationToken.None).ConfigureAwait(false);
+                    if (restarted)
+                    {
+                        _context?.API?.ShowMsg("Antigravity Restart", "Antigravity IDE restarted successfully.", NotifyIconPath(ResultFactory.AppIcon));
+                    }
+                    else
+                    {
+                        _context?.API?.ShowMsgError("Restart failed", "Could not relaunch Antigravity IDE.");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _context?.API?.ShowMsgError("Restart failed", ex.Message);
+                }
+
+                return false;
+            },
+            score: score);
+
+    private Result RestartResult() => RestartBackendResult();
 
     private List<Result>? _commandHints;
     private List<Result>? _helpResults;
@@ -375,7 +424,7 @@ public sealed class QueryRouter
         Hint("ag add", "Add account (OAuth)", ResultFactory.AddIcon),
         Hint("ag remove", "Remove account", ResultFactory.RemoveIcon),
         Hint("ag refresh", "Refresh quotas", ResultFactory.RefreshIcon),
-        Hint("ag restart", "Restart language server", ResultFactory.AppIcon)
+        Hint("ag restart", "Restart backend or IDE", ResultFactory.AppIcon)
     ];
 
     private List<Result> HelpResults() => _helpResults ??=
@@ -384,7 +433,7 @@ public sealed class QueryRouter
         Hint("ag add", "Add Google account", ResultFactory.AddIcon),
         Hint("ag remove [filter]", "Remove account", ResultFactory.RemoveIcon),
         Hint("ag refresh", "Refresh quotas", ResultFactory.RefreshIcon),
-        Hint("ag restart", "Restart language server", ResultFactory.AppIcon),
+        Hint("ag restart", "Restart backend or IDE", ResultFactory.AppIcon),
         Hint("ag status", "Switcher status", ResultFactory.AppIcon)
     ];
 

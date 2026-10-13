@@ -93,14 +93,25 @@ public static class ResultFactory
         };
     }
 
-    public static Result CreateRestartResult(Func<ActionContext, ValueTask<bool>>? onRestart = null)
+    public static Result CreateRestartResult(Func<ActionContext, ValueTask<bool>>? onRestart = null) =>
+        CreateRestartResult(
+            "Restart Antigravity Language Server",
+            "Restarts the background language_server process to refresh index and state",
+            onRestart,
+            100);
+
+    public static Result CreateRestartResult(
+        string title,
+        string subtitle,
+        Func<ActionContext, ValueTask<bool>>? onRestart = null,
+        int score = 100)
     {
         return new Result
         {
-            Title = "Restart Antigravity Language Server",
-            SubTitle = "Restarts the background language_server process to refresh index and state",
+            Title = title,
+            SubTitle = subtitle,
             IcoPath = AppIcon,
-            Score = 100,
+            Score = score,
             AsyncAction = onRestart
         };
     }
