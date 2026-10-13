@@ -2,6 +2,7 @@ using Flow.Launcher.Plugin.AntigravitySwitcher.Models;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Services;
 using Flow.Launcher.Plugin.AntigravitySwitcher.UI;
 using Flow.Launcher.Plugin.SharedModels;
+using System.Text.RegularExpressions;
 
 namespace Flow.Launcher.Plugin.AntigravitySwitcher.Routing;
 
@@ -388,8 +389,9 @@ public sealed class QueryRouter
         ResultFactory.CreateCommandHintResult(title, subtitle, icon, _ =>
         {
             var keyword = _context?.CurrentPluginMetadata?.ActionKeyword ?? "ag";
-            var query = title.StartsWith("ag ", StringComparison.OrdinalIgnoreCase)
-                ? title[3..].Trim()
+            var cleanTitle = Regex.Replace(title, @"\[.*\]", string.Empty);
+            var query = cleanTitle.StartsWith("ag ", StringComparison.OrdinalIgnoreCase)
+                ? cleanTitle[3..].TrimStart()
                 : string.Empty;
             var targetQuery = string.IsNullOrEmpty(query)
                 ? $"{keyword} "
@@ -450,9 +452,10 @@ public sealed class QueryRouter
     {
         var answer = _context?.API?.ShowMsgBox(
             $"Really remove account {account.DisplayName}?",
-            "Remove account");
+            "Remove account",
+            System.Windows.MessageBoxButton.OKCancel);
 
-        if (answer is not null && answer.ToString() is not ("Yes" or "OK"))
+        if (answer is null || answer.ToString() is not ("Yes" or "OK"))
         {
             return;
         }

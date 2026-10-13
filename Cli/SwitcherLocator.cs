@@ -180,7 +180,13 @@ public sealed class SwitcherLocator
                 return false;
             }
 
-            return process.WaitForExit(1500) && process.ExitCode == 0;
+            if (!process.WaitForExit(1500))
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return false;
+            }
+
+            return process.ExitCode == 0;
         }
         catch
         {

@@ -46,10 +46,14 @@ public sealed class CliRunner
         {
             await Task.WhenAll(stdoutTask, stderrTask, process.WaitForExitAsync(timeoutCts.Token)).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
             TryKill(process);
-            throw new TimeoutException($"Command '{argumentLine}' timed out.");
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                throw new TimeoutException($"Command '{argumentLine}' timed out.");
+            }
+            throw;
         }
 
         var stdout = await stdoutTask.ConfigureAwait(false);

@@ -199,6 +199,42 @@ public sealed class QueryRouterTests
     }
 
     [Fact]
+    public async Task RouteAsync_HelpCommand_StripsBracketedParametersInAction()
+    {
+        var cache = new AccountCache();
+        var service = new AccountService(new CliRunner(new SwitcherLocator()), new DashboardClient(), cache);
+        var context = new PluginInitContext();
+        string? changedQuery = null;
+        var api = System.Reflection.DispatchProxy.Create<Flow.Launcher.Plugin.IPublicAPI, TestPublicApiProxy>();
+        ((TestPublicApiProxy)(object)api).OnChangeQuery = q => changedQuery = q;
+        typeof(PluginInitContext).GetProperty("API")?.SetValue(context, api);
+        typeof(PluginInitContext).GetProperty("CurrentPluginMetadata")?.SetValue(context, new Flow.Launcher.Plugin.PluginMetadata { ActionKeyword = "ag" });
+
+        var router = new QueryRouter(service, context);
+        var helpResults = await router.RouteAsync("help");
+        var removeHint = helpResults.FirstOrDefault(r => r.Title == "ag remove [filter]");
+        Assert.NotNull(removeHint);
+        Assert.NotNull(removeHint.Action);
+
+        removeHint.Action(null!);
+        Assert.Equal("ag remove ", changedQuery);
+    }
+
+    public class TestPublicApiProxy : System.Reflection.DispatchProxy
+    {
+        public Action<string>? OnChangeQuery { get; set; }
+
+        protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
+        {
+            if (targetMethod?.Name == "ChangeQuery" && args?.Length > 0 && args[0] is string q)
+            {
+                OnChangeQuery?.Invoke(q);
+            }
+            return null;
+        }
+    }
+
+    [Fact]
     public async Task RouteAsync_FuzzyFiltersAccounts()
     {
         var cache = new AccountCache();

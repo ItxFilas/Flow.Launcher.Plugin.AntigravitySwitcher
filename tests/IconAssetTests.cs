@@ -42,5 +42,6 @@ public sealed class IconAssetTests
         using var img = Image.FromFile(path);
         Assert.Equal(128, img.Width);
         Assert.Equal(128, img.Height);
+        Assert.Equal(System.Drawing.Imaging.PixelFormat.Format32bppArgb, img.PixelFormat);
     }
 }
