@@ -23,6 +23,7 @@ public sealed class QueryRouter
     private readonly AccountService _service;
     private readonly PluginInitContext? _context;
     private int _switchInProgress;
+    private int _isRefreshing;
 
     public QueryRouter(AccountService service, PluginInitContext? context = null)
     {
@@ -68,8 +69,8 @@ public sealed class QueryRouter
             {
                 CommandKind.Add => [AddAccountResult()],
                 CommandKind.Remove => await QueryRemoveAsync(parsed.Argument, token).ConfigureAwait(false),
-                CommandKind.Refresh => [RefreshResult(token)],
-                CommandKind.Restart => [RestartResult(token)],
+                CommandKind.Refresh => [RefreshResult()],
+                CommandKind.Restart => [RestartResult()],
                 CommandKind.Status => await QueryStatusAsync(token).ConfigureAwait(false),
                 CommandKind.Help => HelpResults(),
                 _ => await QueryAccountsAsync(parsed.Argument, token).ConfigureAwait(false)
@@ -134,7 +135,7 @@ public sealed class QueryRouter
             if (_service.TryGetCached(out var cached, out var isStale) && cached.Count > 0)
             {
                 accounts = cached;
-                if (isStale)
+                if (isStale && Interlocked.CompareExchange(ref _isRefreshing, 1, 0) == 0)
                 {
                     _ = Task.Run(async () =>
                     {
@@ -145,6 +146,10 @@ public sealed class QueryRouter
                         }
                         catch
                         {
+                        }
+                        finally
+                        {
+                            Interlocked.Exchange(ref _isRefreshing, 0);
                         }
                     }, CancellationToken.None);
                 }
@@ -253,25 +258,26 @@ public sealed class QueryRouter
             return [ResultFactory.CreateErrorResult("Cannot load accounts", ex.Message)];
         }
 
-        var candidates = accounts.ToList();
-        if (!string.IsNullOrWhiteSpace(filter))
-        {
-            candidates = candidates
-                .Select(a =>
+        var candidates = accounts
+            .Select(a =>
+            {
+                var baseScore = a.IsActive ? 80 : 100;
+                if (string.IsNullOrWhiteSpace(filter))
                 {
-                    var m1 = StringMatcher.FuzzySearch(filter, a.DisplayName);
-                    var m2 = string.IsNullOrEmpty(a.Id)
-                        ? new MatchResult(false, SearchPrecisionScore.None)
-                        : StringMatcher.FuzzySearch(filter, a.Id);
-                    var success = m1.Success || m2.Success;
-                    var score = Math.Max(m1.Score, m2.Score);
-                    return (Account: a, Success: success, Score: score);
-                })
-                .Where(x => x.Success)
-                .OrderByDescending(x => x.Score)
-                .Select(x => x.Account)
-                .ToList();
-        }
+                    return (Account: a, Success: true, Score: baseScore);
+                }
+
+                var m1 = StringMatcher.FuzzySearch(filter, a.DisplayName);
+                var m2 = string.IsNullOrEmpty(a.Id)
+                    ? new MatchResult(false, SearchPrecisionScore.None)
+                    : StringMatcher.FuzzySearch(filter, a.Id);
+                var success = m1.Success || m2.Success;
+                var matchScore = Math.Max(m1.Score, m2.Score);
+                return (Account: a, Success: success, Score: baseScore + matchScore);
+            })
+            .Where(x => x.Success)
+            .OrderByDescending(x => x.Score)
+            .ToList();
 
         if (candidates.Count == 0)
         {
@@ -285,16 +291,17 @@ public sealed class QueryRouter
             ];
         }
 
-        return candidates.Select(account =>
+        return candidates.Select(c =>
         {
-            var captured = account;
+            var captured = c.Account;
             return ResultFactory.CreateRemoveAccountResult(
                 captured,
                 async _ =>
                 {
                     await RemoveWithConfirmAsync(captured).ConfigureAwait(false);
                     return false;
-                });
+                },
+                scoreOverride: c.Score);
         }).ToList();
     }
 
@@ -318,12 +325,12 @@ public sealed class QueryRouter
             return true;
         });
 
-    private Result RefreshResult(CancellationToken token) =>
+    private Result RefreshResult() =>
         ResultFactory.CreateRefreshResult(async _ =>
         {
             try
             {
-                await _service.RefreshQuotasAsync(token).ConfigureAwait(false);
+                await _service.RefreshQuotasAsync(CancellationToken.None).ConfigureAwait(false);
                 _context?.API?.ShowMsg("Quotas", "Refresh complete.", NotifyIconPath(ResultFactory.AppIcon));
                 var keyword = _context?.CurrentPluginMetadata?.ActionKeyword ?? "ag";
                 _context?.API?.ChangeQuery($"{keyword} ", requery: true);
@@ -336,12 +343,12 @@ public sealed class QueryRouter
             return false;
         });
 
-    private Result RestartResult(CancellationToken token) =>
+    private Result RestartResult() =>
         ResultFactory.CreateRestartResult(async _ =>
         {
             try
             {
-                var restarted = await _service.RestartBackendOnlyAsync(token).ConfigureAwait(false);
+                var restarted = await _service.RestartBackendOnlyAsync(CancellationToken.None).ConfigureAwait(false);
                 if (restarted)
                 {
                     _context?.API?.ShowMsg("Antigravity Restart", "Language server backend restarted successfully.", NotifyIconPath(ResultFactory.AppIcon));
@@ -382,9 +389,12 @@ public sealed class QueryRouter
         {
             var keyword = _context?.CurrentPluginMetadata?.ActionKeyword ?? "ag";
             var query = title.StartsWith("ag ", StringComparison.OrdinalIgnoreCase)
-                ? title[3..]
+                ? title[3..].Trim()
                 : string.Empty;
-            _context?.API?.ChangeQuery($"{keyword} {query}".TrimEnd(), requery: true);
+            var targetQuery = string.IsNullOrEmpty(query)
+                ? $"{keyword} "
+                : $"{keyword} {query}";
+            _context?.API?.ChangeQuery(targetQuery, requery: true);
             return false;
         });
 

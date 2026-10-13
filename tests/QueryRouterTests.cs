@@ -257,10 +257,11 @@ public sealed class QueryRouterTests
         Assert.Contains(removeAll, r => r.Title == "Remove alice@example.com");
         Assert.Contains(removeAll, r => r.Title == "Remove bob@example.com");
 
-        // "remove alice" filters to Alice
+        // "remove alice" filters to Alice with boosted score
         var removeAlice = await router.RouteAsync(CreateQuery("remove alice"));
         Assert.Single(removeAlice);
         Assert.Equal("Remove alice@example.com", removeAlice[0].Title);
+        Assert.True(removeAlice[0].Score > 100); // 100 base + fuzzy match score
 
         // "remove non-existent" returns empty indicator
         var removeNone = await router.RouteAsync("remove charlie");
