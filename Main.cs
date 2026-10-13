@@ -15,13 +15,14 @@ public sealed class Main : IPlugin, IContextMenu
     internal const string AddIcon = "Images\\add.png";
     internal const string RemoveIcon = "Images\\remove.png";
     internal const string RefreshIcon = "Images\\refresh.png";
-    internal const string WebIcon = "Images\\web.png";
+
 
     private PluginInitContext _context = null!;
     private AccountService _service = null!;
     private bool _refreshQueued;
     private string? _lastError;
     private DateTimeOffset _lastErrorAt;
+    private int _switchInProgress;
     private static readonly TimeSpan RetryCooldown = TimeSpan.FromSeconds(15);
 
     public void Init(PluginInitContext context)
@@ -32,6 +33,14 @@ public sealed class Main : IPlugin, IContextMenu
         _service = new AccountService(runner, new DashboardClient(), new AccountCache());
         _ = WarmCacheAsync();
     }
+
+    /// <summary>
+    /// Resolves a plugin-relative image to an absolute path. Flow Launcher's Windows toast
+    /// notification requires an absolute icon URI — a relative path makes `new Uri()` throw
+    /// and the API silently falls back to its animated legacy popup.
+    /// </summary>
+    private string NotifyIconPath(string relativePath) =>
+        System.IO.Path.Combine(_context.CurrentPluginMetadata.PluginDirectory, relativePath);
 
     public List<Result> Query(Query query)
     {
@@ -47,7 +56,7 @@ public sealed class Main : IPlugin, IContextMenu
                 "add" => [AddAccountResult()],
                 "remove" => QueryRemove(filter),
                 "refresh" => [RefreshResult()],
-                "web" or "dashboard" => [OpenDashboardResult()],
+
                 "status" => QueryStatus(),
                 "help" => HelpResults(),
                 _ => QueryAccounts(search)
@@ -73,6 +82,17 @@ public sealed class Main : IPlugin, IContextMenu
         [
             new Result
             {
+                Title = "Sign into Antigravity as this account",
+                SubTitle = "Swaps the IDE login without closing the app",
+                IcoPath = NextIcon,
+                Score = 100,
+                AsyncAction = async _ =>
+                {
+                    return TryStartSwitch(account);
+                }
+            },
+            new Result
+            {
                 Title = "Remove this account",
                 SubTitle = account.DisplayName,
                 IcoPath = RemoveIcon,
@@ -92,22 +112,11 @@ public sealed class Main : IPlugin, IContextMenu
                 Action = _ =>
                 {
                     _context.API.CopyToClipboard(account.Email, directCopy: false, showDefaultNotification: false);
-                    _context.API.ShowMsg("Clipboard", account.Email, AppIcon);
+                    _context.API.ShowMsg("Clipboard", account.Email, NotifyIconPath(AppIcon));
                     return false;
                 }
             },
-            new Result
-            {
-                Title = "Open in browser",
-                SubTitle = "Accounts web dashboard",
-                IcoPath = WebIcon,
-                Score = 80,
-                AsyncAction = async _ =>
-                {
-                    await OpenDashboardAsync().ConfigureAwait(false);
-                    return true;
-                }
-            }
+
         ];
     }
 
@@ -142,24 +151,13 @@ public sealed class Main : IPlugin, IContextMenu
                 Title = "Switch to next account",
                 SubTitle = next is null
                     ? "No other account with free quota"
-                    : $"Next: {next.DisplayName} · 5hr {next.FiveHourLabel} · week {next.WeeklyLabel}",
+                    : $"Signs into Antigravity as {next.DisplayName} · 5hr {next.FiveHourLabel} · week {next.WeeklyLabel}",
                 IcoPath = NextIcon,
                 Score = 200,
                 ContextData = new ResultContext { Kind = ResultKind.NextSwitch, Account = next },
                 AsyncAction = async _ =>
                 {
-                    try
-                    {
-                        var switched = await _service.SwitchToNextAsync().ConfigureAwait(false);
-                        _context.API.ShowMsg("Account switched", switched.DisplayName, AppIcon);
-                        _context.API.ChangeQuery(_context.CurrentPluginMetadata.ActionKeyword + " ", requery: true);
-                    }
-                    catch (Exception ex)
-                    {
-                        _context.API.ShowMsgError("Switch failed", ex.Message);
-                    }
-
-                    return false;
+                    return next is not null && TryStartSwitch(next);
                 }
             });
         }
@@ -178,18 +176,7 @@ public sealed class Main : IPlugin, IContextMenu
                 ContextData = new ResultContext { Kind = ResultKind.Account, Account = captured },
                 AsyncAction = async _ =>
                 {
-                    try
-                    {
-                        await _service.SwitchAsync(captured).ConfigureAwait(false);
-                        _context.API.ShowMsg("Account switched", captured.DisplayName, AppIcon);
-                        _context.API.ChangeQuery(_context.CurrentPluginMetadata.ActionKeyword + " ", requery: true);
-                    }
-                    catch (Exception ex)
-                    {
-                        _context.API.ShowMsgError("Switch failed", ex.Message);
-                    }
-
-                    return false;
+                    return TryStartSwitch(captured);
                 }
             });
         }
@@ -210,7 +197,7 @@ public sealed class Main : IPlugin, IContextMenu
                 Action = _ =>
                 {
                     _service.StartAddAccount();
-                    _context.API.ShowMsg("Add account", "OAuth flow has been started in your browser.", AppIcon);
+                    _context.API.ShowMsg("Add account", "OAuth flow has been started in your browser.", NotifyIconPath(AppIcon));
                     return true;
                 }
             });
@@ -310,7 +297,7 @@ public sealed class Main : IPlugin, IContextMenu
             try
             {
                 _service.StartAddAccount();
-                _context.API.ShowMsg("Add account", "OAuth flow started. Complete the sign-in in your browser.", AppIcon);
+                _context.API.ShowMsg("Add account", "OAuth flow started. Complete the sign-in in your browser.", NotifyIconPath(AppIcon));
             }
             catch (Exception ex)
             {
@@ -332,7 +319,7 @@ public sealed class Main : IPlugin, IContextMenu
             try
             {
                 await _service.RefreshQuotasAsync().ConfigureAwait(false);
-                _context.API.ShowMsg("Quotas", "Refresh complete.", AppIcon);
+                _context.API.ShowMsg("Quotas", "Refresh complete.", NotifyIconPath(AppIcon));
                 _context.API.ChangeQuery(_context.CurrentPluginMetadata.ActionKeyword + " ", requery: true);
             }
             catch (Exception ex)
@@ -344,25 +331,13 @@ public sealed class Main : IPlugin, IContextMenu
         }
     };
 
-    private Result OpenDashboardResult() => new()
-    {
-        Title = "Open web dashboard",
-        SubTitle = $"Switcher web UI (default http://127.0.0.1:{AccountService.DefaultDashboardPort})",
-        IcoPath = WebIcon,
-        Score = 100,
-        AsyncAction = async _ =>
-        {
-            await OpenDashboardAsync().ConfigureAwait(false);
-            return true;
-        }
-    };
+
 
     private List<Result> CommandHints() =>
     [
         Hint("ag add", "Add account (OAuth)", AddIcon),
         Hint("ag remove", "Remove account", RemoveIcon),
-        Hint("ag refresh", "Refresh quotas", RefreshIcon),
-        Hint("ag web", "Open dashboard", WebIcon)
+        Hint("ag refresh", "Refresh quotas", RefreshIcon)
     ];
 
     private List<Result> HelpResults() =>
@@ -371,7 +346,6 @@ public sealed class Main : IPlugin, IContextMenu
         Hint("ag add", "Add Google account", AddIcon),
         Hint("ag remove [filter]", "Remove account", RemoveIcon),
         Hint("ag refresh", "Refresh quotas", RefreshIcon),
-        Hint("ag web", "Open dashboard", WebIcon),
         Hint("ag status", "Switcher status", AppIcon)
     ];
 
@@ -435,6 +409,46 @@ public sealed class Main : IPlugin, IContextMenu
         return [];
     }
 
+    /// <summary>
+    /// Kicks off a switch in the background so Flow Launcher hides instantly — the credential
+    /// swap and the app-side reload happen off-screen. The outcome is reported with the same
+    /// notification style the NoSleep plugin uses (title = plugin name, terse status message).
+    /// </summary>
+    private bool TryStartSwitch(AccountInfo account)
+    {
+        if (Interlocked.Exchange(ref _switchInProgress, 1) == 1)
+        {
+            return true; // another switch is already running — drop the duplicate Enter
+        }
+
+        if (account.IsActive)
+        {
+            Interlocked.Exchange(ref _switchInProgress, 0);
+            _context.API.ShowMsg("Antigravity Switcher", $"Already signed in as {account.DisplayName}", NotifyIconPath(AppIcon));
+            return true; // nothing to do; close Flow Launcher
+        }
+
+        _ = SwitchAndNotifyAsync(account);
+        return true; // hide Flow Launcher immediately
+    }
+
+    private async Task SwitchAndNotifyAsync(AccountInfo account)
+    {
+        try
+        {
+            await _service.SwitchAsync(account).ConfigureAwait(false);
+            _context.API.ShowMsg("Antigravity Switcher", $"Switched to {account.DisplayName}", NotifyIconPath(AppIcon));
+        }
+        catch (Exception ex)
+        {
+            _context.API.ShowMsgError("Antigravity Switcher", ex.Message);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _switchInProgress, 0);
+        }
+    }
+
     private async Task WarmCacheAsync()
     {
         try
@@ -461,22 +475,7 @@ public sealed class Main : IPlugin, IContextMenu
         }
     }
 
-    private async Task OpenDashboardAsync()
-    {
-        try
-        {
-            var uri = await _service.OpenDashboardUriAsync().ConfigureAwait(false);
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = uri.ToString(),
-                UseShellExecute = true
-            });
-        }
-        catch (Exception ex)
-        {
-            _context.API.ShowMsgError("Dashboard", ex.Message);
-        }
-    }
+
 
     private async Task RemoveWithConfirmAsync(AccountInfo account)
     {
@@ -492,7 +491,7 @@ public sealed class Main : IPlugin, IContextMenu
         try
         {
             await _service.RemoveAsync(account).ConfigureAwait(false);
-            _context.API.ShowMsg("Account removed", account.DisplayName, AppIcon);
+            _context.API.ShowMsg("Account removed", account.DisplayName, NotifyIconPath(AppIcon));
             _context.API.ChangeQuery(_context.CurrentPluginMetadata.ActionKeyword + " ", requery: true);
         }
         catch (Exception ex)

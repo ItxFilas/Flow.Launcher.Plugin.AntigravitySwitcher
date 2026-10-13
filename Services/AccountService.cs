@@ -8,14 +8,16 @@ public sealed class AccountService
     private readonly CliRunner _cli;
     private readonly DashboardClient _dashboard;
     private readonly AccountCache _cache;
+    private readonly IAntigravityAppController _antigravityApp;
     private int? _dashboardPort;
     private DateTimeOffset _portCachedAt;
 
-    public AccountService(CliRunner cli, DashboardClient dashboard, AccountCache cache)
+    public AccountService(CliRunner cli, DashboardClient dashboard, AccountCache cache, IAntigravityAppController? antigravityApp = null)
     {
         _cli = cli;
         _dashboard = dashboard;
         _cache = cache;
+        _antigravityApp = antigravityApp ?? new AntigravityAppController(cli);
     }
 
     public bool TryGetCached(out IReadOnlyList<AccountInfo> accounts) => _cache.TryGet(out accounts);
@@ -45,37 +47,40 @@ public sealed class AccountService
         return accounts;
     }
 
+    /// <summary>
+    /// Switches the Antigravity IDE login to the given account. The switcher daemon rewrites
+    /// the Windows Credential Manager login the IDE reads at startup (real login swap), then
+    /// the IDE is closed and relaunched normally so it signs in with the new account.
+    /// </summary>
     public async Task SwitchAsync(AccountInfo account, CancellationToken cancellationToken = default)
     {
-        // Preferred path: the switcher performs account switching through its local dashboard
-        // REST API (POST /api/accounts/{id}/select). The CLI has no 'switch' command as of v1.1.0.
         var baseUri = await ResolveDashboardUriAsync(cancellationToken).ConfigureAwait(false);
-        var switched = baseUri is not null &&
-                       await _dashboard.SelectAccountAsync(baseUri, account.Id, cancellationToken).ConfigureAwait(false);
-
-        if (!switched)
-        {
-            // Fall back to a CLI 'switch' command for forward/backward compatibility.
-            switched = await TryCliSwitchAsync(account, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (!switched)
+        if (baseUri is null)
         {
             throw new InvalidOperationException(
-                "Switching failed. Run the switcher as a daemon (`antigravity-account-switcher serve` or `launch`) and try again.");
+                "The switcher daemon is not reachable. Run `antigravity-account-switcher serve` (or `launch`) first.");
+        }
+
+        var resultSwap = await _dashboard.LoginSwapAsync(baseUri, account.Id, cancellationToken).ConfigureAwait(false);
+        var swapped = resultSwap.Succeeded;
+        var error = resultSwap.Error;
+        if (!swapped)
+        {
+            throw new InvalidOperationException(
+                $"Signing into Antigravity as {account.DisplayName} failed. {error ?? "Unknown error."}");
+        }
+
+        // Apply the swap to the running app with minimal disruption: restart only the
+        // language_server backend (the Electron frontend respawns it with the new login),
+        // or launch the app when it is not running.
+        var applied = await _antigravityApp.RestartForLoginSwapAsync(cancellationToken).ConfigureAwait(false);
+        if (!applied)
+        {
+            throw new InvalidOperationException(
+                "Login swapped, but Antigravity could not be started — open it manually to sign in with the new account.");
         }
 
         _cache.Invalidate();
-    }
-
-    public async Task<AccountInfo> SwitchToNextAsync(CancellationToken cancellationToken = default)
-    {
-        var accounts = await ListAccountsAsync(forceRefresh: true, cancellationToken).ConfigureAwait(false);
-        var next = SelectNextAvailable(accounts) ??
-                   throw new InvalidOperationException("No other account with free quota is available.");
-
-        await SwitchAsync(next, cancellationToken).ConfigureAwait(false);
-        return next;
     }
 
     public void StartAddAccount()
@@ -86,8 +91,8 @@ public sealed class AccountService
 
     public async Task RemoveAsync(AccountInfo account, CancellationToken cancellationToken = default)
     {
-        // Preferred path: REST DELETE /api/accounts/{id} on the dashboard.
-        var baseUri = await ResolveDashboardUriAsync(cancellationToken).ConfigureAwait(false);
+        // Preferred path: REST DELETE /api/accounts/{id} on the API.
+        var baseUri = await ResolveApiUriAsync(cancellationToken).ConfigureAwait(false);
         if (baseUri is not null &&
             await _dashboard.DeleteAccountAsync(baseUri, account.Id, cancellationToken).ConfigureAwait(false))
         {
@@ -124,7 +129,7 @@ public sealed class AccountService
 
     public async Task RefreshQuotasAsync(CancellationToken cancellationToken = default)
     {
-        var baseUri = await ResolveDashboardUriAsync(cancellationToken).ConfigureAwait(false);
+        var baseUri = await ResolveApiUriAsync(cancellationToken).ConfigureAwait(false);
         if (baseUri is not null && await _dashboard.RefreshQuotasAsync(baseUri, cancellationToken).ConfigureAwait(false))
         {
             _cache.Invalidate();
@@ -146,14 +151,15 @@ public sealed class AccountService
         return result.Combined.Trim();
     }
 
-    public async Task<Uri> OpenDashboardUriAsync(CancellationToken cancellationToken = default)
+    public async Task<Uri> OpenApiUriAsync(CancellationToken cancellationToken = default)
     {
-        var uri = await ResolveDashboardUriAsync(cancellationToken).ConfigureAwait(false);
-        return uri ?? new Uri($"http://127.0.0.1:{DefaultDashboardPort}/");
+        var uri = await ResolveApiUriAsync(cancellationToken).ConfigureAwait(false);
+        return uri ?? new Uri($"http://127.0.0.1:{DefaultApiPort}/");
     }
 
-    /// <summary>Built-in default port of the switcher's web dashboard.</summary>
-    public const int DefaultDashboardPort = 8080;
+    /// <summary>Built-in default port of the switcher's REST API/proxy.</summary>
+    public const int DefaultApiPort = 8080;
+    public const int DefaultDashboardPort = DefaultApiPort;
 
     public static AccountInfo? SelectNextAvailable(IReadOnlyList<AccountInfo> accounts)
     {
@@ -179,35 +185,9 @@ public sealed class AccountService
         string.IsNullOrWhiteSpace(status) ||
         string.Equals(status, "active", StringComparison.OrdinalIgnoreCase);
 
-    private async Task<bool> TryCliSwitchAsync(AccountInfo account, CancellationToken cancellationToken)
-    {
-        foreach (var identifier in new[] { account.Id, account.Email }.Where(v => !string.IsNullOrWhiteSpace(v)))
-        {
-            try
-            {
-                var result = await _cli.RunAsync(["switch", identifier], TimeSpan.FromSeconds(8), cancellationToken).ConfigureAwait(false);
-                if (result.Succeeded)
-                {
-                    return true;
-                }
-
-                if (!LooksUnknownCommand(result.Combined))
-                {
-                    return false;
-                }
-            }
-            catch (TimeoutException)
-            {
-                return false;
-            }
-        }
-
-        return false;
-    }
-
     private async Task<IReadOnlyList<AccountInfo>?> TryListFromApiAsync(CancellationToken cancellationToken)
     {
-        var baseUri = await ResolveDashboardUriAsync(cancellationToken).ConfigureAwait(false);
+        var baseUri = await ResolveApiUriAsync(cancellationToken).ConfigureAwait(false);
         if (baseUri is null)
         {
             return null;
@@ -222,7 +202,9 @@ public sealed class AccountService
         return AccountParser.ParseApiAccounts(json);
     }
 
-    private async Task<Uri?> ResolveDashboardUriAsync(CancellationToken cancellationToken)
+
+
+    private async Task<Uri?> ResolveApiUriInternalAsync(CancellationToken cancellationToken)
     {
         if (_dashboardPort is int cached && DateTimeOffset.UtcNow - _portCachedAt < TimeSpan.FromSeconds(30))
         {
@@ -234,10 +216,7 @@ public sealed class AccountService
         }
 
         var ports = new List<int>();
-
-        // Explicit override via environment (ANTIGRAVITY_PORT) takes precedence.
-        if (int.TryParse(Environment.GetEnvironmentVariable("ANTIGRAVITY_PORT"), out var envPort) &&
-            envPort is > 0 and <= 65535)
+        if (int.TryParse(Environment.GetEnvironmentVariable("ANTIGRAVITY_PORT"), out var envPort) && envPort is > 0 and <= 65535)
         {
             ports.Add(envPort);
         }
@@ -253,16 +232,11 @@ public sealed class AccountService
         }
         catch
         {
-            // config may be unavailable; try known defaults
         }
 
-        // 8080 is the switcher's built-in default; 1831 is a common documented example.
-        foreach (var fallback in new[] { 8080, 1831 })
+        if (!ports.Contains(8080))
         {
-            if (!ports.Contains(fallback))
-            {
-                ports.Add(fallback);
-            }
+            ports.Add(8080);
         }
 
         foreach (var port in ports)
@@ -275,9 +249,10 @@ public sealed class AccountService
                 return uri;
             }
         }
-
         return null;
     }
+    private Task<Uri?> ResolveDashboardUriAsync(CancellationToken cancellationToken) => ResolveApiUriInternalAsync(cancellationToken);
+    private Task<Uri?> ResolveApiUriAsync(CancellationToken cancellationToken) => ResolveApiUriInternalAsync(cancellationToken);
 
     private static bool LooksUnknownCommand(string text) =>
         text.Contains("Unknown command", StringComparison.OrdinalIgnoreCase);

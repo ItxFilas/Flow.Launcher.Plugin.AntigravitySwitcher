@@ -10,20 +10,27 @@ Action keyword: **`ag`**
 
 ## How it works
 
-The switcher (v1.1.0) **does not** expose a CLI `switch` or `remove-account` command. The plugin
-therefore performs switching and removal through the local REST API of the switcher's web
-dashboard:
+Switching an account is a **real login swap**: the switcher exchanges the target account's
+refresh token for fresh Google credentials, rewrites the Antigravity login stored in the
+Windows Credential Manager (`gemini:antigravity`), marks the account active, and the plugin
+then applies it to the running app. The switch is applied by restarting only Antigravity's
+`language_server` backend — the Electron frontend respawns it automatically and the new
+process picks up the swapped login **without closing the app window**. If the backend does
+not come back within ~15 s, the plugin falls back to closing and relaunching the app. No
+proxy environment variables are involved.
 
-| Operation       | REST call                              | CLI fallback                |
-| :-------------- | :------------------------------------- | :-------------------------- |
-| List accounts   | `GET /api/accounts`                    | `list-accounts`             |
-| Switch account  | `POST /api/accounts/{id}/select`       | `switch <id>` (compat)      |
-| Remove account  | `DELETE /api/accounts/{id}`            | `remove-account` (compat)   |
-| Refresh quotas  | `POST /api/quota/refresh`              | `refresh-quotas`            |
-| Status          | —                                      | `status`                    |
+| Operation        | REST call                              | CLI fallback              |
+| :--------------- | :------------------------------------- | :------------------------ |
+| List accounts    | `GET /api/accounts`                    | `list-accounts`           |
+| Switch account   | `POST /api/accounts/{id}/login-swap`   | — (daemon required)       |
+| Remove account   | `DELETE /api/accounts/{id}`            | `remove-account` (compat) |
+| Refresh quotas   | `POST /api/quota/refresh`              | `refresh-quotas`          |
+| Status           | —                                      | `status`                  |
 
-> **Important:** the dashboard API is only available while the switcher runs as a daemon
-> (`antigravity-account-switcher serve` or `launch`). Reading the account list alone works with the CLI.
+> **Important:** the dashboard API (including the login swap) is only available while the
+> switcher runs as a daemon (`antigravity-account-switcher serve` or `launch`). The login
+> swap itself is **Windows-only**, because Antigravity stores its login in the Windows
+> Credential Manager. Reading the account list alone works with the CLI.
 
 ---
 
@@ -79,14 +86,20 @@ Manual equivalent:
 
 | Command             | Description |
 | :------------------ | :---- |
-| `ag`                | Account list. The first row, **"Switch to next account"**, switches to the account with the most free quota. |
+| `ag`                | Account list. The first row, **"Switch to next account"**, signs the IDE into the account with the most free quota. |
 | `ag <filter>`       | Filters accounts by email / ID. |
 | `ag add`            | Adds a new Google account (`add-account`, OAuth in your browser). |
 | `ag remove [filter]`| Offers accounts for removal; Enter confirms the deletion. |
 | `ag refresh`        | Forces an immediate quota refresh. |
-| `ag web`            | Opens the web dashboard (`http://127.0.0.1:8080`, or the configured port). |
+
 | `ag status`         | Shows the switcher status (copyable). |
 | `ag help`           | Command overview. |
+
+**Enter** on an account row (or **Sign into Antigravity as this account** in its context
+menu) swaps the Antigravity login to that account and applies it by restarting the app's
+backend — the window stays open. Flow Launcher closes immediately and the switch runs in
+the background; a NoSleep-style notification reports the result (`Switched to …`). The
+`[ACTIVE]` marker follows the account the IDE is running as.
 
 Each account row shows `[ACTIVE]` in the title, and a subtitle with the state
 (Active/Standby/Exhausted/Error/Disabled), the remaining quota per window
@@ -98,6 +111,7 @@ Active · 5hr 87% (resets 3h12m) · week 68% (resets 5d)
 
 ### Context menu (`Shift + Enter` / right click)
 
+- **Sign into Antigravity as this account**
 - **Remove this account**
 - **Copy email to clipboard**
 - **Open in browser**
@@ -115,7 +129,7 @@ Active · 5hr 87% (resets 3h12m) · week 68% (resets 5d)
 | Variable                     | Meaning |
 | :--------------------------- | :----- |
 | `ANTIGRAVITY_SWITCHER_BIN`   | Explicit path to the switcher binary. |
-| `ANTIGRAVITY_PORT`           | Web dashboard port (takes precedence over the config file). |
+| `ANTIGRAVITY_PORT`           | REST API/proxy port (takes precedence over the config file). |
 
 ---
 
@@ -156,6 +170,9 @@ pwsh ./scripts/Generate-Icons.ps1
 - **"The antigravity-account-switcher tool was not found"** — add the binary to `PATH`,
   set `ANTIGRAVITY_SWITCHER_BIN`, or make sure it is available inside WSL.
 - **Switching fails** — run the switcher as a daemon
-  (`antigravity-account-switcher serve` or `launch`); without a running dashboard the account
-  cannot be switched.
+  (`antigravity-account-switcher serve` or `launch`); without the running switcher the login
+  cannot be swapped. The login swap itself is Windows-only.
+- **"Login swapped, but Antigravity was not found"** — the binary could not be located. Set
+  `ANTIGRAVITY_BIN` or configure the switcher with
+  `antigravity-account-switcher config set antigravity_bin <path>`.
 - **I don't see the changes** — use `ag refresh`, or restart Flow Launcher.

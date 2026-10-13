@@ -3,12 +3,22 @@ using System.Text.Json;
 
 namespace Flow.Launcher.Plugin.AntigravitySwitcher.Cli;
 
-public sealed class DashboardClient
+public sealed class DashboardClient : IDisposable
 {
-    private readonly HttpClient _http = new()
+    private readonly HttpClient _http;
+
+    public DashboardClient(HttpMessageHandler? handler = null)
     {
-        Timeout = TimeSpan.FromSeconds(3)
-    };
+        _http = new HttpClient(handler ?? new HttpClientHandler())
+        {
+            Timeout = TimeSpan.FromSeconds(3)
+        };
+    }
+
+    public void Dispose()
+    {
+        _http.Dispose();
+    }
 
     public async Task<bool> IsReachableAsync(Uri baseUri, CancellationToken cancellationToken = default)
     {
@@ -85,6 +95,62 @@ public sealed class DashboardClient
         catch
         {
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Rewrites Antigravity's login credential so the IDE signs in as the given account
+    /// (POST /api/accounts/{id}/login-swap on the switcher daemon).
+    /// </summary>
+    public async Task<(bool Succeeded, string? Error)> LoginSwapAsync(Uri baseUri, string accountId, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            using var response = await _http.PostAsync(
+                new Uri(baseUri, $"/api/accounts/{Uri.EscapeDataString(accountId)}/login-swap"),
+                content: null,
+                cancellationToken).ConfigureAwait(false);
+
+            if (response.IsSuccessStatusCode)
+            {
+                return (true, null);
+            }
+
+            var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+            return (false, TryReadErrorMessage(body) ?? $"The switcher returned HTTP {(int)response.StatusCode}.");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.Message);
+        }
+    }
+
+    /// <summary>Reads the {"error":{"code","message","detail"}} payload used by the switcher API.</summary>
+    public static string? TryReadErrorMessage(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            if (!document.RootElement.TryGetProperty("error", out var error))
+            {
+                return null;
+            }
+
+            var message = error.TryGetProperty("message", out var m) ? m.GetString() : null;
+            var detail = error.TryGetProperty("detail", out var d) ? d.GetString() : null;
+
+            if (!string.IsNullOrWhiteSpace(message) &&
+                !string.IsNullOrWhiteSpace(detail) &&
+                !string.Equals(message, detail, StringComparison.Ordinal))
+            {
+                return $"{message} {detail}".Trim();
+            }
+
+            return string.IsNullOrWhiteSpace(message) ? detail : message;
+        }
+        catch
+        {
+            return null;
         }
     }
 
