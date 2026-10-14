@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Cli;
 
 namespace Flow.Launcher.Plugin.AntigravitySwitcher.Services;
@@ -20,6 +21,11 @@ public interface IAntigravityAppController
     /// Closes and immediately relaunches the full Antigravity desktop IDE.
     /// </summary>
     Task<bool> RestartAppAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Optimizes the application's app.asar in-place to remove restart cooldown and limit caps.
+    /// </summary>
+    bool EnsureAsarOptimized(string? asarPath = null) => false;
 }
 
 /// <summary>
@@ -31,11 +37,13 @@ public sealed class AntigravityAppController : IAntigravityAppController
     private const string AppProcessName = "Antigravity";
 
     private readonly CliRunner _cli;
+    private readonly IAntigravityCdpClient? _cdpClient;
     private static string? _cachedExePath;
 
-    public AntigravityAppController(CliRunner cli)
+    public AntigravityAppController(CliRunner cli, IAntigravityCdpClient? cdpClient = null)
     {
         _cli = cli;
+        _cdpClient = cdpClient;
     }
 
     public async Task<bool> RestartForLoginSwapAsync(CancellationToken cancellationToken = default)
@@ -73,7 +81,102 @@ public sealed class AntigravityAppController : IAntigravityAppController
         return true;
     }
 
-    private static async Task<bool> RestartBackendAsync(CancellationToken cancellationToken)
+    public bool EnsureAsarOptimized(string? asarPath = null)
+    {
+        if (!string.IsNullOrWhiteSpace(asarPath))
+        {
+            return OptimizeAsarBytes(asarPath);
+        }
+
+        var candidates = new List<string?>
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Antigravity", "resources", "app.asar"),
+            !string.IsNullOrWhiteSpace(_cachedExePath) ? Path.Combine(Path.GetDirectoryName(_cachedExePath)!, "resources", "app.asar") : null,
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Antigravity", "resources", "app.asar"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Antigravity", "resources", "app.asar")
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate))
+            {
+                return OptimizeAsarBytes(candidate);
+            }
+        }
+
+        return false;
+    }
+
+    public static bool OptimizeAsarBytes(string filePath)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            {
+                return false;
+            }
+
+            var target1 = Encoding.UTF8.GetBytes("RESTART_COOLDOWN_MS = 2000;");
+            var replacement1 = Encoding.UTF8.GetBytes("RESTART_COOLDOWN_MS = 0000;");
+            var target2 = Encoding.UTF8.GetBytes("const MAX_RESTARTS = 3;");
+            var replacement2 = Encoding.UTF8.GetBytes("const MAX_RESTARTS=999;");
+
+            byte[] fileBytes;
+            using (var readStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                fileBytes = new byte[readStream.Length];
+                int totalRead = 0;
+                while (totalRead < fileBytes.Length)
+                {
+                    int read = readStream.Read(fileBytes, totalRead, fileBytes.Length - totalRead);
+                    if (read == 0) break;
+                    totalRead += read;
+                }
+            }
+
+            var replacements = new List<(long offset, byte[] data)>();
+            FindOccurrences(fileBytes, target1, replacement1, replacements);
+            FindOccurrences(fileBytes, target2, replacement2, replacements);
+
+            if (replacements.Count == 0)
+            {
+                return false;
+            }
+
+            using (var writeStream = new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+            {
+                foreach (var (offset, data) in replacements)
+                {
+                    writeStream.Seek(offset, SeekOrigin.Begin);
+                    writeStream.Write(data, 0, data.Length);
+                }
+                writeStream.Flush();
+            }
+
+            return true;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static void FindOccurrences(byte[] source, byte[] target, byte[] replacement, List<(long offset, byte[] data)> replacements)
+    {
+        ReadOnlySpan<byte> span = source;
+        ReadOnlySpan<byte> targetSpan = target;
+        int index = 0;
+        while (index <= source.Length - target.Length)
+        {
+            int found = span.Slice(index).IndexOf(targetSpan);
+            if (found < 0) break;
+            int matchIndex = index + found;
+            replacements.Add((matchIndex, replacement));
+            index = matchIndex + target.Length;
+        }
+    }
+
+    private async Task<bool> RestartBackendAsync(CancellationToken cancellationToken)
     {
         var processes = Process.GetProcessesByName(LanguageServerProcessName);
         if (processes.Length == 0)
@@ -81,9 +184,6 @@ public sealed class AntigravityAppController : IAntigravityAppController
             return false;
         }
 
-        var oldPids = processes.Select(p => p.Id).ToHashSet();
-
-        // Concurrently terminate all language server instances
         foreach (var process in processes)
         {
             try
@@ -92,34 +192,25 @@ public sealed class AntigravityAppController : IAntigravityAppController
             }
             catch
             {
-                // Process already exited
             }
         }
 
-        // Confirm termination of previous instances (< 30ms)
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(300);
-        while (DateTimeOffset.UtcNow < deadline)
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(TimeSpan.FromMilliseconds(400));
+        try
         {
-            if (cancellationToken.IsCancellationRequested)
+            await Task.WhenAll(processes.Select(p => SafeWaitForExitAsync(p, cts.Token))).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            foreach (var p in processes)
             {
-                return false;
+                p.Dispose();
             }
-
-            try
-            {
-                var remaining = Process.GetProcessesByName(LanguageServerProcessName);
-                if (remaining.All(p => p.HasExited || !oldPids.Contains(p.Id)))
-                {
-                    return true;
-                }
-            }
-            catch
-            {
-            }
-
-            await Task.Delay(15, cancellationToken).ConfigureAwait(false);
         }
 
+        _cdpClient?.TriggerAutoDismissInBackground();
         return true;
     }
 
@@ -198,61 +289,71 @@ public sealed class AntigravityAppController : IAntigravityAppController
         return null;
     }
 
-    private static async Task CloseAsync(CancellationToken cancellationToken)
+    private async Task CloseAsync(CancellationToken cancellationToken)
     {
         var appProcesses = Process.GetProcessesByName(AppProcessName);
         var backendProcesses = Process.GetProcessesByName(LanguageServerProcessName);
 
-        if (appProcesses.Length == 0 && backendProcesses.Length == 0)
+        if (appProcesses.Length > 0 || backendProcesses.Length > 0)
         {
-            return;
-        }
+            foreach (var process in appProcesses)
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+            }
 
-        // Concurrently terminate all app and backend processes with entire process trees
-        foreach (var process in appProcesses)
-        {
+            foreach (var process in backendProcesses)
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                }
+            }
+
+            var all = appProcesses.Concat(backendProcesses).ToList();
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            cts.CancelAfter(TimeSpan.FromMilliseconds(600));
             try
             {
-                process.Kill(entireProcessTree: true);
+                await Task.WhenAll(all.Select(p => SafeWaitForExitAsync(p, cts.Token))).ConfigureAwait(false);
             }
-            catch
+            catch (OperationCanceledException) { }
+            finally
             {
+                foreach (var p in all)
+                {
+                    p.Dispose();
+                }
             }
         }
 
-        foreach (var process in backendProcesses)
+        try
         {
-            try
-            {
-                process.Kill(entireProcessTree: true);
-            }
-            catch
-            {
-            }
+            EnsureAsarOptimized();
         }
-
-        // Wait until all processes have fully exited and released Windows file/pipe locks (< 50ms)
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromMilliseconds(800);
-        while (DateTimeOffset.UtcNow < deadline)
+        catch
         {
-            if (!IsAnyRunning(AppProcessName) && !IsAnyRunning(LanguageServerProcessName))
-            {
-                return;
-            }
-
-            await Task.Delay(15, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private static Task LaunchAsync(string exePath, CancellationToken cancellationToken)
+    private Task LaunchAsync(string exePath, CancellationToken cancellationToken)
     {
         var dir = Path.GetDirectoryName(exePath);
         Process.Start(new ProcessStartInfo
         {
             FileName = exePath,
             WorkingDirectory = string.IsNullOrEmpty(dir) ? Environment.CurrentDirectory : dir,
-            UseShellExecute = true
+            UseShellExecute = false
         });
+        _cdpClient?.TriggerAutoDismissInBackground();
         return Task.CompletedTask;
     }
 
@@ -279,6 +380,26 @@ public sealed class AntigravityAppController : IAntigravityAppController
         catch
         {
             return null;
+        }
+    }
+
+    private static async Task SafeWaitForExitAsync(Process process, CancellationToken token)
+    {
+        try
+        {
+            if (process.HasExited)
+            {
+                return;
+            }
+
+            await process.WaitForExitAsync(token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
         }
     }
 }
