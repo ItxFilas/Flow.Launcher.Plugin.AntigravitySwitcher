@@ -39,6 +39,7 @@ public sealed class AccountServiceTests
         public bool AppliesSwap { get; init; } = true;
         public int RestartCalls { get; private set; }
         public int RestartAppCalls { get; private set; }
+        public int EnsureAsarOptimizedCalls { get; private set; }
 
         public Task<bool> RestartForLoginSwapAsync(CancellationToken cancellationToken = default)
         {
@@ -51,35 +52,62 @@ public sealed class AccountServiceTests
             RestartAppCalls++;
             return Task.FromResult(AppliesSwap);
         }
+
+        public bool EnsureAsarOptimized(string? asarPath = null)
+        {
+            EnsureAsarOptimizedCalls++;
+            return true;
+        }
+    }
+
+    private sealed class StubCdpClient : IAntigravityCdpClient
+    {
+        public int TriggerAutoDismissCalls { get; private set; }
+        public int? ActivePort { get; set; } = 9222;
+
+        public int? ResolveActivePort() => ActivePort;
+
+        public Task<bool> AutoDismissSecurityNoticeAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(true);
+
+        public void TriggerAutoDismissInBackground()
+        {
+            TriggerAutoDismissCalls++;
+        }
     }
 
     [Fact]
-    public async Task SwitchAsync_SwapsLoginThenRestartsAppForLogin()
+    public async Task SwitchAsync_SwapsLoginThenRestartsAppForLogin_AndTriggersCdpAutoDismiss()
     {
         var controller = new StubAppController { AppliesSwap = true };
+        var cdp = new StubCdpClient();
         var service = CreateService(
             new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"swapped\":true,\"email\":\"signed-in@example.com\"}")
             })),
-            controller);
+            controller,
+            cdp);
 
         using var port = SetEnvPort();
         await service.SwitchAsync(new AccountInfo { Id = "acct-1", Email = "signed-in@example.com" });
 
         Assert.Equal(1, controller.RestartCalls);
+        Assert.Equal(1, cdp.TriggerAutoDismissCalls);
     }
 
     [Fact]
     public async Task SwitchAsync_Throws_WhenSwapIsRejected()
     {
         var controller = new StubAppController { AppliesSwap = true };
+        var cdp = new StubCdpClient();
         var service = CreateService(
             new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.UnprocessableEntity)
             {
                 Content = new StringContent("{\"error\":{\"code\":422,\"message\":\"account has no refresh token\"}}")
             })),
-            controller);
+            controller,
+            cdp);
 
         using var port = SetEnvPort();
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -87,18 +115,21 @@ public sealed class AccountServiceTests
 
         Assert.Contains("account has no refresh token", ex.Message);
         Assert.Equal(0, controller.RestartCalls);
+        Assert.Equal(0, cdp.TriggerAutoDismissCalls);
     }
 
     [Fact]
     public async Task SwitchAsync_Throws_WhenAppCannotBeBroughtUp()
     {
         var controller = new StubAppController { AppliesSwap = false };
+        var cdp = new StubCdpClient();
         var service = CreateService(
             new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"swapped\":true,\"email\":\"signed-in@example.com\"}")
             })),
-            controller);
+            controller,
+            cdp);
 
         using var port = SetEnvPort();
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -106,6 +137,7 @@ public sealed class AccountServiceTests
 
         Assert.Contains("could not be started", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, controller.RestartCalls);
+        Assert.Equal(0, cdp.TriggerAutoDismissCalls);
     }
 
     [Fact]
@@ -161,11 +193,36 @@ public sealed class AccountServiceTests
         Assert.False(service.TryGetCached(out _, out _));
     }
 
-    private static AccountService CreateService(DashboardClient dashboard, IAntigravityAppController controller)
+    [Fact]
+    public void Constructor_DefaultsCdpClientAndAppController_WhenNull()
+    {
+        var service = new AccountService(
+            new CliRunner(new SwitcherLocator()),
+            new DashboardClient(),
+            new AccountCache());
+
+        Assert.NotNull(service);
+    }
+
+    [Fact]
+    public void Constructor_AcceptsCustomCdpClient_WithDefaultAppController()
+    {
+        var cdp = new StubCdpClient();
+        var service = new AccountService(
+            new CliRunner(new SwitcherLocator()),
+            new DashboardClient(),
+            new AccountCache(),
+            antigravityApp: null,
+            cdpClient: cdp);
+
+        Assert.NotNull(service);
+    }
+
+    private static AccountService CreateService(DashboardClient dashboard, IAntigravityAppController controller, IAntigravityCdpClient? cdpClient = null)
     {
         // The real locator is fine: ANTIGRAVITY_PORT makes the dashboard probe prefer the env port,
         // which the stub handler answers, so the CLI is only touched if that probe fails (it cannot).
-        return new AccountService(new CliRunner(new SwitcherLocator()), dashboard, new AccountCache(), controller);
+        return new AccountService(new CliRunner(new SwitcherLocator()), dashboard, new AccountCache(), controller, cdpClient);
     }
 
     private static IDisposable SetEnvPort()

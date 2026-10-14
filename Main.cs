@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Cli;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Routing;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Services;
@@ -25,12 +26,26 @@ public sealed class Main : IAsyncPlugin, IContextMenu, IReloadable
         _context = context;
         var locator = new SwitcherLocator();
         var runner = new CliRunner(locator);
-        _service = new AccountService(runner, new DashboardClient(), new AccountCache());
+        var cdp = new AntigravityCdpClient();
+        var controller = new AntigravityAppController(runner, cdp);
+        _service = new AccountService(runner, new DashboardClient(), new AccountCache(), controller, cdp);
         _router = new QueryRouter(_service, _context);
 
-        // Pre-warm the account cache in background on startup so the first query is instantaneous
+        // Pre-warm the account cache and optimize asar in background on startup
         _ = Task.Run(async () =>
         {
+            try
+            {
+                if (Process.GetProcessesByName("Antigravity").Length == 0)
+                {
+                    controller.EnsureAsarOptimized();
+                }
+            }
+            catch
+            {
+                // Ignored: background pre-optimization should never break startup
+            }
+
             try
             {
                 await _service.ListAccountsAsync(forceRefresh: true).ConfigureAwait(false);

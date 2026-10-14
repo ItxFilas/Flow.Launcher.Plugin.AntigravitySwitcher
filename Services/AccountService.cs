@@ -9,15 +9,22 @@ public sealed class AccountService
     private readonly DashboardClient _dashboard;
     private readonly AccountCache _cache;
     private readonly IAntigravityAppController _antigravityApp;
+    private readonly IAntigravityCdpClient _cdpClient;
     private int? _dashboardPort;
     private DateTimeOffset _portCachedAt;
 
-    public AccountService(CliRunner cli, DashboardClient dashboard, AccountCache cache, IAntigravityAppController? antigravityApp = null)
+    public AccountService(
+        CliRunner cli,
+        DashboardClient dashboard,
+        AccountCache cache,
+        IAntigravityAppController? antigravityApp = null,
+        IAntigravityCdpClient? cdpClient = null)
     {
         _cli = cli;
         _dashboard = dashboard;
         _cache = cache;
-        _antigravityApp = antigravityApp ?? new AntigravityAppController(cli);
+        _cdpClient = cdpClient ?? new AntigravityCdpClient();
+        _antigravityApp = antigravityApp ?? new AntigravityAppController(cli, _cdpClient);
     }
 
     public bool TryGetCached(out IReadOnlyList<AccountInfo> accounts) => _cache.TryGet(out accounts);
@@ -84,6 +91,7 @@ public sealed class AccountService
                 "Login swapped, but Antigravity could not be started — open it manually to sign in with the new account.");
         }
 
+        _cdpClient.TriggerAutoDismissInBackground();
         _cache.Invalidate();
     }
 
