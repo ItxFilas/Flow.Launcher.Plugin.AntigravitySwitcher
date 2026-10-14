@@ -77,37 +77,32 @@ public sealed class AccountServiceTests
     }
 
     [Fact]
-    public async Task SwitchAsync_SwapsLoginThenRestartsAppForLogin_AndTriggersCdpAutoDismiss()
+    public async Task SwitchAsync_SwapsLoginThenRestartsAppForLogin()
     {
         var controller = new StubAppController { AppliesSwap = true };
-        var cdp = new StubCdpClient();
         var service = CreateService(
             new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"swapped\":true,\"email\":\"signed-in@example.com\"}")
             })),
-            controller,
-            cdp);
+            controller);
 
         using var port = SetEnvPort();
         await service.SwitchAsync(new AccountInfo { Id = "acct-1", Email = "signed-in@example.com" });
 
         Assert.Equal(1, controller.RestartCalls);
-        Assert.Equal(1, cdp.TriggerAutoDismissCalls);
     }
 
     [Fact]
     public async Task SwitchAsync_Throws_WhenSwapIsRejected()
     {
         var controller = new StubAppController { AppliesSwap = true };
-        var cdp = new StubCdpClient();
         var service = CreateService(
             new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.UnprocessableEntity)
             {
                 Content = new StringContent("{\"error\":{\"code\":422,\"message\":\"account has no refresh token\"}}")
             })),
-            controller,
-            cdp);
+            controller);
 
         using var port = SetEnvPort();
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -115,21 +110,18 @@ public sealed class AccountServiceTests
 
         Assert.Contains("account has no refresh token", ex.Message);
         Assert.Equal(0, controller.RestartCalls);
-        Assert.Equal(0, cdp.TriggerAutoDismissCalls);
     }
 
     [Fact]
     public async Task SwitchAsync_Throws_WhenAppCannotBeBroughtUp()
     {
         var controller = new StubAppController { AppliesSwap = false };
-        var cdp = new StubCdpClient();
         var service = CreateService(
             new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("{\"swapped\":true,\"email\":\"signed-in@example.com\"}")
             })),
-            controller,
-            cdp);
+            controller);
 
         using var port = SetEnvPort();
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -137,7 +129,6 @@ public sealed class AccountServiceTests
 
         Assert.Contains("could not be started", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(1, controller.RestartCalls);
-        Assert.Equal(0, cdp.TriggerAutoDismissCalls);
     }
 
     [Fact]

@@ -88,10 +88,20 @@ public sealed class AntigravityAppController : IAntigravityAppController
             return OptimizeAsarBytes(asarPath);
         }
 
+        string? cachedExeAsar = null;
+        if (!string.IsNullOrWhiteSpace(_cachedExePath))
+        {
+            var dir = Path.GetDirectoryName(_cachedExePath);
+            if (!string.IsNullOrWhiteSpace(dir))
+            {
+                cachedExeAsar = Path.Combine(dir, "resources", "app.asar");
+            }
+        }
+
         var candidates = new List<string?>
         {
+            cachedExeAsar,
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Antigravity", "resources", "app.asar"),
-            !string.IsNullOrWhiteSpace(_cachedExePath) ? Path.Combine(Path.GetDirectoryName(_cachedExePath)!, "resources", "app.asar") : null,
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Antigravity", "resources", "app.asar"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Antigravity", "resources", "app.asar")
         };
@@ -100,7 +110,10 @@ public sealed class AntigravityAppController : IAntigravityAppController
         {
             if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate))
             {
-                return OptimizeAsarBytes(candidate);
+                if (OptimizeAsarBytes(candidate))
+                {
+                    return true;
+                }
             }
         }
 

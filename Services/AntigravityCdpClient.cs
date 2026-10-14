@@ -65,28 +65,31 @@ public sealed class AntigravityCdpClient : IAntigravityCdpClient
 
     public async Task<bool> AutoDismissSecurityNoticeAsync(CancellationToken cancellationToken = default)
     {
-        var port = ResolveActivePort();
-        if (port is null) return false;
-
         var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(3);
+        int? port = null;
+
         while (DateTimeOffset.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
         {
-            try
+            port ??= ResolveActivePort();
+            if (port is not null)
             {
-                var response = await _http.GetStringAsync($"http://127.0.0.1:{port}/json", cancellationToken).ConfigureAwait(false);
-                using var doc = JsonDocument.Parse(response);
-                foreach (var element in doc.RootElement.EnumerateArray())
+                try
                 {
-                    if (element.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "page" &&
-                        element.TryGetProperty("webSocketDebuggerUrl", out var wsProp) && wsProp.GetString() is { } wsUrl)
+                    var response = await _http.GetStringAsync($"http://127.0.0.1:{port}/json", cancellationToken).ConfigureAwait(false);
+                    using var doc = JsonDocument.Parse(response);
+                    foreach (var element in doc.RootElement.EnumerateArray())
                     {
-                        var dismissed = await TryEvaluateDismissAsync(wsUrl, cancellationToken).ConfigureAwait(false);
-                        if (dismissed) return true;
+                        if (element.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "page" &&
+                            element.TryGetProperty("webSocketDebuggerUrl", out var wsProp) && wsProp.GetString() is { } wsUrl)
+                        {
+                            var dismissed = await TryEvaluateDismissAsync(wsUrl, cancellationToken).ConfigureAwait(false);
+                            if (dismissed) return true;
+                        }
                     }
                 }
-            }
-            catch
-            {
+                catch
+                {
+                }
             }
 
             try
