@@ -1,3 +1,5 @@
+using System.Net;
+using System.Net.Http;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Cli;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Models;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Routing;
@@ -232,12 +234,20 @@ public sealed class QueryRouterTests
     public class TestPublicApiProxy : System.Reflection.DispatchProxy
     {
         public Action<string>? OnChangeQuery { get; set; }
+        public Action<string, string, string?>? OnShowMsg { get; set; }
 
         protected override object? Invoke(System.Reflection.MethodInfo? targetMethod, object?[]? args)
         {
             if (targetMethod?.Name == "ChangeQuery" && args?.Length > 0 && args[0] is string q)
             {
                 OnChangeQuery?.Invoke(q);
+            }
+            else if (targetMethod?.Name == "ShowMsg" && args?.Length >= 2)
+            {
+                var title = args[0] as string ?? string.Empty;
+                var subTitle = args[1] as string ?? string.Empty;
+                var icon = args.Length > 2 ? args[2] as string : null;
+                OnShowMsg?.Invoke(title, subTitle, icon);
             }
             return null;
         }
@@ -341,4 +351,127 @@ public sealed class QueryRouterTests
         var emptyMenus = router.LoadContextMenus(nonAccountResult);
         Assert.Empty(emptyMenus);
     }
+
+    [Fact]
+    public async Task TryStartSwitch_InactiveAccount_ShowsImmediateNotificationAndSwitchedOnCompletion()
+    {
+        const string envVar = "ANTIGRAVITY_PORT";
+        Environment.SetEnvironmentVariable(envVar, "65530");
+        try
+        {
+            var handler = new StubHttpMessageHandler(req =>
+            {
+                if (req.RequestUri!.AbsolutePath == "/api/status")
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"status\":\"ok\"}") };
+                }
+                if (req.RequestUri!.AbsolutePath.Contains("/login-swap"))
+                {
+                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"swapped\":true,\"email\":\"inactive@example.com\"}") };
+                }
+                return new HttpResponseMessage(HttpStatusCode.NotFound);
+            });
+
+            var dashboard = new DashboardClient(handler);
+            var cache = new AccountCache();
+            var service = new AccountService(new CliRunner(new SwitcherLocator()), dashboard, cache, new StubAppController());
+
+            var context = new PluginInitContext();
+            var messages = new List<(string Title, string SubTitle, string? Icon)>();
+            var switchedTcs = new TaskCompletionSource<bool>();
+            var api = System.Reflection.DispatchProxy.Create<Flow.Launcher.Plugin.IPublicAPI, TestPublicApiProxy>();
+            var proxy = (TestPublicApiProxy)(object)api;
+            proxy.OnShowMsg = (title, subTitle, icon) =>
+            {
+                messages.Add((title, subTitle, icon));
+                if (subTitle.StartsWith("Switched to", StringComparison.OrdinalIgnoreCase))
+                {
+                    switchedTcs.TrySetResult(true);
+                }
+            };
+            typeof(PluginInitContext).GetProperty("API")?.SetValue(context, api);
+            typeof(PluginInitContext).GetProperty("CurrentPluginMetadata")?.SetValue(context, new Flow.Launcher.Plugin.PluginMetadata { ActionKeyword = "ag" });
+
+            var inactiveAccount = new AccountInfo
+            {
+                Id = "acc-inactive",
+                Email = "inactive@example.com",
+                IsActive = false
+            };
+            cache.Set(new List<AccountInfo> { inactiveAccount });
+            var router = new QueryRouter(service, context);
+
+            var results = await router.RouteAsync("");
+            var accountResult = results.FirstOrDefault(r => r.ContextData is ResultContext { Account.Id: "acc-inactive" });
+            Assert.NotNull(accountResult);
+            Assert.NotNull(accountResult.AsyncAction);
+
+            // Act: trigger selection
+            var actionResult = await accountResult.AsyncAction(new Flow.Launcher.Plugin.ActionContext());
+
+            // 1. Assert immediate notification is shown synchronously upon selection
+            Assert.True(actionResult);
+            Assert.Contains(messages, m => m.Title == "Antigravity Switcher" && m.SubTitle == $"Switching to {inactiveAccount.DisplayName}...");
+
+            // 2. Wait for async switch to complete and assert completion notification
+            var completedTask = await Task.WhenAny(switchedTcs.Task, Task.Delay(3000));
+            Assert.Equal(switchedTcs.Task, completedTask);
+            Assert.Contains(messages, m => m.Title == "Antigravity Switcher" && m.SubTitle == $"Switched to {inactiveAccount.DisplayName}");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(envVar, null);
+        }
+    }
+
+    [Fact]
+    public async Task TryStartSwitch_ActiveAccount_DoesNotShowSwitchingNotification()
+    {
+        var context = new PluginInitContext();
+        var messages = new List<(string Title, string SubTitle, string? Icon)>();
+        var api = System.Reflection.DispatchProxy.Create<Flow.Launcher.Plugin.IPublicAPI, TestPublicApiProxy>();
+        var proxy = (TestPublicApiProxy)(object)api;
+        proxy.OnShowMsg = (title, subTitle, icon) => messages.Add((title, subTitle, icon));
+        typeof(PluginInitContext).GetProperty("API")?.SetValue(context, api);
+        typeof(PluginInitContext).GetProperty("CurrentPluginMetadata")?.SetValue(context, new Flow.Launcher.Plugin.PluginMetadata { ActionKeyword = "ag" });
+
+        var cache = new AccountCache();
+        var activeAccount = new AccountInfo
+        {
+            Id = "acc-active",
+            Email = "active@example.com",
+            IsActive = true
+        };
+        cache.Set(new List<AccountInfo> { activeAccount });
+        var service = new AccountService(new CliRunner(new SwitcherLocator()), new DashboardClient(), cache);
+        var router = new QueryRouter(service, context);
+
+        var results = await router.RouteAsync("");
+        var accountResult = results.FirstOrDefault(r => r.ContextData is ResultContext { Account.Id: "acc-active" });
+        Assert.NotNull(accountResult);
+        Assert.NotNull(accountResult.AsyncAction);
+
+        var actionResult = await accountResult.AsyncAction(new Flow.Launcher.Plugin.ActionContext());
+
+        Assert.True(actionResult);
+        Assert.Single(messages);
+        Assert.Equal($"Already signed in as {activeAccount.DisplayName}", messages[0].SubTitle);
+        Assert.DoesNotContain(messages, m => m.SubTitle.StartsWith("Switching to", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private sealed class StubAppController : IAntigravityAppController
+    {
+        public Task<bool> RestartForLoginSwapAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> RestartAppAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public bool EnsureAsarOptimized(string? asarPath = null) => true;
+    }
+
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
+        public StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) => _responder = responder;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(_responder(request));
+    }
 }
+

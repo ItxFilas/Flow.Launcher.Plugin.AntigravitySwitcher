@@ -479,6 +479,7 @@ public sealed class QueryRouter
             return true;
         }
 
+        _context?.API?.ShowMsg("Antigravity Switcher", $"Switching to {account.DisplayName}...", NotifyIconPath(ResultFactory.AppIcon));
         _ = SwitchAndNotifyAsync(account);
         return true;
     }
