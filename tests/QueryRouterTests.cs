@@ -409,14 +409,14 @@ public sealed class QueryRouterTests
             // Act: trigger selection
             var actionResult = await accountResult.AsyncAction(new Flow.Launcher.Plugin.ActionContext());
 
-            // 1. Assert immediate notification is shown synchronously upon selection
+            // 1. Assert immediate single notification is shown synchronously upon selection
             Assert.True(actionResult);
-            Assert.Contains(messages, m => m.Title == "Antigravity Switcher" && m.SubTitle == $"Switching to {inactiveAccount.DisplayName}...");
-
-            // 2. Wait for async switch to complete and assert completion notification
-            var completedTask = await Task.WhenAny(switchedTcs.Task, Task.Delay(3000));
-            Assert.Equal(switchedTcs.Task, completedTask);
+            Assert.Single(messages);
             Assert.Contains(messages, m => m.Title == "Antigravity Switcher" && m.SubTitle == $"Switched to {inactiveAccount.DisplayName}");
+
+            // 2. Wait for async switch to complete and assert no second notification was added
+            await Task.Delay(100);
+            Assert.Single(messages);
         }
         finally
         {

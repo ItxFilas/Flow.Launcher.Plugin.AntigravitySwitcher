@@ -479,7 +479,7 @@ public sealed class QueryRouter
             return true;
         }
 
-        _context?.API?.ShowMsg("Antigravity Switcher", $"Switching to {account.DisplayName}...", NotifyIconPath(ResultFactory.AppIcon));
+        _context?.API?.ShowMsg("Antigravity Switcher", $"Switched to {account.DisplayName}", NotifyIconPath(ResultFactory.AppIcon));
         _ = SwitchAndNotifyAsync(account);
         return true;
     }
@@ -489,7 +489,6 @@ public sealed class QueryRouter
         try
         {
             await _service.SwitchAsync(account).ConfigureAwait(false);
-            _context?.API?.ShowMsg("Antigravity Switcher", $"Switched to {account.DisplayName}", NotifyIconPath(ResultFactory.AppIcon));
         }
         catch (Exception ex)
         {
