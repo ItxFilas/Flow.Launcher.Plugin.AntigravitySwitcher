@@ -79,6 +79,10 @@ public sealed class AccountService
                 $"Signing into Antigravity as {account.DisplayName} failed. {error ?? "Unknown error."}");
         }
 
+        // Pre-accept onboarding terms in app_storage.json for the switched account
+        // so Antigravity doesn't prompt the "Security Notice & Data Use" modal.
+        AntigravityStorageManager.TryPreAcceptOnboardingTerms(account.Email);
+
         // Apply the swap to the running app with minimal disruption: restart only the
         // language_server backend (the Electron frontend respawns it with the new login),
         // or launch the app when it is not running.

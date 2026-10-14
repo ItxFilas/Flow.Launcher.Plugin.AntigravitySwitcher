@@ -36,10 +36,7 @@ public sealed class Main : IAsyncPlugin, IContextMenu, IReloadable
         {
             try
             {
-                if (Process.GetProcessesByName("Antigravity").Length == 0)
-                {
-                    controller.EnsureAsarOptimized();
-                }
+                controller.EnsureAsarOptimized();
             }
             catch
             {

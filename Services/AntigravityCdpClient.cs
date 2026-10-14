@@ -19,17 +19,31 @@ public interface IAntigravityCdpClient
 public sealed class AntigravityCdpClient : IAntigravityCdpClient
 {
     public const string DismissNoticeScript = @"(() => {
-        const text = document.body ? document.body.innerText : '';
-        if (text && text.includes('Security Notice')) {
-            const cb = document.querySelector('input[type=checkbox]');
-            if (cb && !cb.checked) { cb.click(); }
-            const btn = Array.from(document.querySelectorAll('button'))
-                .find(b => b.textContent && b.textContent.includes('Accept and continue'));
-            if (btn) {
-                btn.click();
-                return true;
+        const headings = Array.from(document.querySelectorAll('h1, h2, h3, div'));
+        const notice = headings.find(h => h.textContent && h.textContent.trim().startsWith('Security Notice & Data Use'));
+        if (!notice) {
+            return false;
+        }
+
+        const container = notice.closest('[role=""dialog""]') || notice.closest('.max-w-xl') || document.body;
+
+        const label = container.querySelector('label');
+        const cb = container.querySelector('input[type=""checkbox""]') || container.querySelector('[role=""checkbox""]');
+        if (cb && !cb.checked && cb.getAttribute('aria-checked') !== 'true') {
+            if (label) {
+                label.click();
+            } else {
+                cb.click();
             }
         }
+
+        const buttons = Array.from(container.querySelectorAll('button'));
+        const btn = buttons.find(b => b.textContent && b.textContent.includes('Accept and continue'));
+        if (btn && !btn.disabled && btn.getAttribute('aria-disabled') !== 'true') {
+            btn.click();
+            return true;
+        }
+
         return false;
     })()";
 
@@ -65,7 +79,7 @@ public sealed class AntigravityCdpClient : IAntigravityCdpClient
 
     public async Task<bool> AutoDismissSecurityNoticeAsync(CancellationToken cancellationToken = default)
     {
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(3);
+        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(12);
         int? port = null;
 
         while (DateTimeOffset.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
@@ -111,7 +125,7 @@ public sealed class AntigravityCdpClient : IAntigravityCdpClient
         {
             try
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
                 await AutoDismissSecurityNoticeAsync(cts.Token).ConfigureAwait(false);
             }
             catch

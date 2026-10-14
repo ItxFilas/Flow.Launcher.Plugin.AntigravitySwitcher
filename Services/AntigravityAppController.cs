@@ -48,11 +48,23 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
     public async Task<bool> RestartForLoginSwapAsync(CancellationToken cancellationToken = default)
     {
+        var wasJustOptimized = EnsureAsarOptimized();
+        var isProcessStale = IsAppProcessStale();
+
         var appRunning = IsAnyRunning(AppProcessName);
         var backendRunning = IsAnyRunning(LanguageServerProcessName);
 
         if (appRunning || backendRunning)
         {
+            // If the asar was just patched from stock to 0ms cooldown, or if the running
+            // Antigravity.exe process was started before app.asar was patched, the running
+            // instance still has the 2000ms value in its JS heap memory.
+            // Restart the app once so Electron loads the 0ms cooldown into memory.
+            if (wasJustOptimized || isProcessStale)
+            {
+                return await RestartAppAsync(cancellationToken).ConfigureAwait(false);
+            }
+
             // 1. Instant path: kill language_server and let Electron respawn it (< 30ms).
             if (backendRunning && await RestartBackendAsync(cancellationToken).ConfigureAwait(false))
             {
@@ -81,17 +93,13 @@ public sealed class AntigravityAppController : IAntigravityAppController
         return true;
     }
 
-    public bool EnsureAsarOptimized(string? asarPath = null)
+    public static string? ResolveAsarPath(string? cachedExePath = null)
     {
-        if (!string.IsNullOrWhiteSpace(asarPath))
-        {
-            return OptimizeAsarBytes(asarPath);
-        }
-
         string? cachedExeAsar = null;
-        if (!string.IsNullOrWhiteSpace(_cachedExePath))
+        var exe = cachedExePath ?? _cachedExePath;
+        if (!string.IsNullOrWhiteSpace(exe))
         {
-            var dir = Path.GetDirectoryName(_cachedExePath);
+            var dir = Path.GetDirectoryName(exe);
             if (!string.IsNullOrWhiteSpace(dir))
             {
                 cachedExeAsar = Path.Combine(dir, "resources", "app.asar");
@@ -110,11 +118,60 @@ public sealed class AntigravityAppController : IAntigravityAppController
         {
             if (!string.IsNullOrWhiteSpace(candidate) && File.Exists(candidate))
             {
-                if (OptimizeAsarBytes(candidate))
+                return candidate;
+            }
+        }
+
+        return null;
+    }
+
+    public static bool IsAppProcessStale(string? asarPath = null)
+    {
+        try
+        {
+            var targetAsar = asarPath ?? ResolveAsarPath();
+            if (string.IsNullOrWhiteSpace(targetAsar) || !File.Exists(targetAsar))
+            {
+                return false;
+            }
+
+            var asarTime = File.GetLastWriteTimeUtc(targetAsar);
+            var processes = Process.GetProcessesByName(AppProcessName);
+            if (processes.Length == 0) return false;
+
+            foreach (var p in processes)
+            {
+                try
                 {
-                    return true;
+                    if (p.StartTime.ToUniversalTime() < asarTime)
+                    {
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // Ignore processes we cannot inspect
                 }
             }
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
+    public bool EnsureAsarOptimized(string? asarPath = null)
+    {
+        if (!string.IsNullOrWhiteSpace(asarPath))
+        {
+            return OptimizeAsarBytes(asarPath);
+        }
+
+        var resolved = ResolveAsarPath();
+        if (!string.IsNullOrWhiteSpace(resolved) && OptimizeAsarBytes(resolved))
+        {
+            return true;
         }
 
         return false;

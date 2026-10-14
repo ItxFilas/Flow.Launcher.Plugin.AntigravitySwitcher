@@ -198,4 +198,22 @@ public sealed class AntigravityAppControllerTests
         Assert.NotNull(controllerNullCdp);
         Assert.NotNull(controllerDefault);
     }
+
+    [Fact]
+    public void ResolveAsarPath_WithNullAndNonExistentCandidates_ReturnsNullOrValid()
+    {
+        var resolved = AntigravityAppController.ResolveAsarPath(cachedExePath: "C:\\nonexistent\\Antigravity.exe");
+        if (resolved is not null)
+        {
+            Assert.True(File.Exists(resolved));
+            Assert.EndsWith("app.asar", resolved, StringComparison.OrdinalIgnoreCase);
+        }
+    }
+
+    [Fact]
+    public void IsAppProcessStale_WithNonExistentAsar_ReturnsFalse()
+    {
+        var result = AntigravityAppController.IsAppProcessStale("C:\\nonexistent\\app.asar");
+        Assert.False(result);
+    }
 }
