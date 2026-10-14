@@ -461,8 +461,9 @@ public sealed class QueryRouterTests
 
     private sealed class StubAppController : IAntigravityAppController
     {
-        public Task<bool> RestartForLoginSwapAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
-        public Task<bool> RestartAppAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> RestartForLoginSwapAsync(string? savedChatPath = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> RestartAppAsync(string? savedChatPath = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
+        public Task<bool> RestartBackendOnlyAsync(string? savedChatPath = null, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public bool EnsureAsarOptimized(string? asarPath = null) => true;
     }
 

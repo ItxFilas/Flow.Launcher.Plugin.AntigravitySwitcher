@@ -9,6 +9,7 @@ public sealed class AccountService
     private readonly DashboardClient _dashboard;
     private readonly AccountCache _cache;
     private readonly IAntigravityAppController _antigravityApp;
+    private readonly IAntigravityCdpClient? _cdpClient;
     private int? _dashboardPort;
     private DateTimeOffset _portCachedAt;
 
@@ -22,6 +23,7 @@ public sealed class AccountService
         _cli = cli;
         _dashboard = dashboard;
         _cache = cache;
+        _cdpClient = cdpClient;
         _antigravityApp = antigravityApp ?? new AntigravityAppController(cli, cdpClient ?? new AntigravityCdpClient());
     }
 
@@ -63,6 +65,10 @@ public sealed class AccountService
     /// </summary>
     public async Task SwitchAsync(AccountInfo account, CancellationToken cancellationToken = default)
     {
+        var activeChatPath = _cdpClient != null
+            ? await _cdpClient.CaptureActiveChatPathAsync(cancellationToken).ConfigureAwait(false)
+            : null;
+
         var baseUri = await ResolveDashboardUriAsync(cancellationToken).ConfigureAwait(false);
         if (baseUri is null)
         {
@@ -86,7 +92,7 @@ public sealed class AccountService
         // Apply the swap to the running app with minimal disruption: restart only the
         // language_server backend (the Electron frontend respawns it with the new login),
         // or launch the app when it is not running.
-        var applied = await _antigravityApp.RestartForLoginSwapAsync(cancellationToken).ConfigureAwait(false);
+        var applied = await _antigravityApp.RestartForLoginSwapAsync(activeChatPath, cancellationToken).ConfigureAwait(false);
         if (!applied)
         {
             throw new InvalidOperationException(
@@ -98,12 +104,12 @@ public sealed class AccountService
 
     public async Task<bool> RestartBackendOnlyAsync(CancellationToken cancellationToken = default)
     {
-        return await _antigravityApp.RestartForLoginSwapAsync(cancellationToken).ConfigureAwait(false);
+        return await _antigravityApp.RestartForLoginSwapAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<bool> RestartAppAsync(CancellationToken cancellationToken = default)
     {
-        return await _antigravityApp.RestartAppAsync(cancellationToken).ConfigureAwait(false);
+        return await _antigravityApp.RestartAppAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
     public void StartAddAccount()

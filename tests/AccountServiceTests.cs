@@ -40,16 +40,26 @@ public sealed class AccountServiceTests
         public int RestartCalls { get; private set; }
         public int RestartAppCalls { get; private set; }
         public int EnsureAsarOptimizedCalls { get; private set; }
+        public string? LastSavedChatPath { get; private set; }
 
-        public Task<bool> RestartForLoginSwapAsync(CancellationToken cancellationToken = default)
+        public Task<bool> RestartForLoginSwapAsync(string? savedChatPath = null, CancellationToken cancellationToken = default)
         {
             RestartCalls++;
+            LastSavedChatPath = savedChatPath;
             return Task.FromResult(AppliesSwap);
         }
 
-        public Task<bool> RestartAppAsync(CancellationToken cancellationToken = default)
+        public Task<bool> RestartAppAsync(string? savedChatPath = null, CancellationToken cancellationToken = default)
         {
             RestartAppCalls++;
+            LastSavedChatPath = savedChatPath;
+            return Task.FromResult(AppliesSwap);
+        }
+
+        public Task<bool> RestartBackendOnlyAsync(string? savedChatPath = null, CancellationToken cancellationToken = default)
+        {
+            RestartCalls++;
+            LastSavedChatPath = savedChatPath;
             return Task.FromResult(AppliesSwap);
         }
 
@@ -63,9 +73,18 @@ public sealed class AccountServiceTests
     private sealed class StubCdpClient : IAntigravityCdpClient
     {
         public int TriggerAutoDismissCalls { get; private set; }
+        public int TriggerPostRestartActionsCalls { get; private set; }
+        public string? LastTriggeredSavedChatPath { get; private set; }
+        public string? CapturedChatPath { get; set; }
         public int? ActivePort { get; set; } = 9222;
 
         public int? ResolveActivePort() => ActivePort;
+
+        public Task<string?> CaptureActiveChatPathAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(CapturedChatPath);
+
+        public Task<bool> RestoreActiveChatAsync(string chatPath, CancellationToken cancellationToken = default) =>
+            Task.FromResult(true);
 
         public Task<bool> AutoDismissSecurityNoticeAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(true);
@@ -73,6 +92,12 @@ public sealed class AccountServiceTests
         public void TriggerAutoDismissInBackground()
         {
             TriggerAutoDismissCalls++;
+        }
+
+        public void TriggerPostRestartActionsInBackground(string? savedChatPath = null)
+        {
+            TriggerPostRestartActionsCalls++;
+            LastTriggeredSavedChatPath = savedChatPath;
         }
     }
 
@@ -91,6 +116,65 @@ public sealed class AccountServiceTests
         await service.SwitchAsync(new AccountInfo { Id = "acct-1", Email = "signed-in@example.com" });
 
         Assert.Equal(1, controller.RestartCalls);
+    }
+
+    [Fact]
+    public async Task SwitchAsync_WithActiveChatPath_CapturesAndPassesToRestartForLoginSwapAsync()
+    {
+        var controller = new StubAppController { AppliesSwap = true };
+        var cdp = new StubCdpClient { CapturedChatPath = "/c/test-chat-uuid" };
+        var service = CreateService(
+            new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"swapped\":true,\"email\":\"signed-in@example.com\"}")
+            })),
+            controller,
+            cdp);
+
+        using var port = SetEnvPort();
+        await service.SwitchAsync(new AccountInfo { Id = "acct-1", Email = "signed-in@example.com" });
+
+        Assert.Equal(1, controller.RestartCalls);
+        Assert.Equal("/c/test-chat-uuid", controller.LastSavedChatPath);
+    }
+
+    [Fact]
+    public async Task SwitchAsync_WhenActiveChatPathIsNull_PassesNullToRestartForLoginSwapAsync()
+    {
+        var controller = new StubAppController { AppliesSwap = true };
+        var cdp = new StubCdpClient { CapturedChatPath = null };
+        var service = CreateService(
+            new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"swapped\":true,\"email\":\"signed-in@example.com\"}")
+            })),
+            controller,
+            cdp);
+
+        using var port = SetEnvPort();
+        await service.SwitchAsync(new AccountInfo { Id = "acct-1", Email = "signed-in@example.com" });
+
+        Assert.Equal(1, controller.RestartCalls);
+        Assert.Null(controller.LastSavedChatPath);
+    }
+
+    [Fact]
+    public async Task SwitchAsync_WhenCdpClientIsNull_PassesNullToRestartForLoginSwapAsync()
+    {
+        var controller = new StubAppController { AppliesSwap = true };
+        var service = CreateService(
+            new DashboardClient(SwitcherApi(_ => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"swapped\":true,\"email\":\"signed-in@example.com\"}")
+            })),
+            controller,
+            cdpClient: null);
+
+        using var port = SetEnvPort();
+        await service.SwitchAsync(new AccountInfo { Id = "acct-1", Email = "signed-in@example.com" });
+
+        Assert.Equal(1, controller.RestartCalls);
+        Assert.Null(controller.LastSavedChatPath);
     }
 
     [Fact]

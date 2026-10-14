@@ -14,11 +14,76 @@ public sealed class AntigravityAppControllerTests
     private sealed class FakeCdpClient : IAntigravityCdpClient
     {
         public int TriggerCallCount { get; private set; }
+        public int PostRestartActionCallCount { get; private set; }
+        public string? LastPostRestartChatPath { get; private set; }
         public int? ResolveActivePort() => 9222;
+        public Task<string?> CaptureActiveChatPathAsync(CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+        public Task<bool> RestoreActiveChatAsync(string chatPath, CancellationToken cancellationToken = default) => Task.FromResult(true);
         public Task<bool> AutoDismissSecurityNoticeAsync(CancellationToken cancellationToken = default) => Task.FromResult(true);
         public void TriggerAutoDismissInBackground()
         {
             TriggerCallCount++;
+        }
+        public void TriggerPostRestartActionsInBackground(string? savedChatPath = null)
+        {
+            PostRestartActionCallCount++;
+            LastPostRestartChatPath = savedChatPath;
+        }
+    }
+
+    [Fact]
+    public async Task RestartAppAsync_InvokesTriggerPostRestartActionsInBackground_WithProvidedPath()
+    {
+        AntigravityAppController.ResetCachedExePath();
+        var tempExe = Path.GetTempFileName();
+        var fakeCdp = new FakeCdpClient();
+        var controller = new AntigravityAppController(
+            new CliRunner(new SwitcherLocator()),
+            fakeCdp,
+            processLauncher: _ => { });
+
+        try
+        {
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_BIN", tempExe);
+            var result = await controller.RestartAppAsync("/c/test-chat-path");
+
+            Assert.True(result);
+            Assert.Equal(1, fakeCdp.PostRestartActionCallCount);
+            Assert.Equal("/c/test-chat-path", fakeCdp.LastPostRestartChatPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_BIN", null);
+            AntigravityAppController.ResetCachedExePath();
+            if (File.Exists(tempExe)) File.Delete(tempExe);
+        }
+    }
+
+    [Fact]
+    public async Task RestartForLoginSwapAsync_InvokesTriggerPostRestartActionsInBackground_WithProvidedPath()
+    {
+        AntigravityAppController.ResetCachedExePath();
+        var tempExe = Path.GetTempFileName();
+        var fakeCdp = new FakeCdpClient();
+        var controller = new AntigravityAppController(
+            new CliRunner(new SwitcherLocator()),
+            fakeCdp,
+            processLauncher: _ => { });
+
+        try
+        {
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_BIN", tempExe);
+            var result = await controller.RestartForLoginSwapAsync("/c/swap-chat-path");
+
+            Assert.True(result);
+            Assert.Equal(1, fakeCdp.PostRestartActionCallCount);
+            Assert.Equal("/c/swap-chat-path", fakeCdp.LastPostRestartChatPath);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_BIN", null);
+            AntigravityAppController.ResetCachedExePath();
+            if (File.Exists(tempExe)) File.Delete(tempExe);
         }
     }
 

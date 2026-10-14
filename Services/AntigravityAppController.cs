@@ -11,21 +11,10 @@ namespace Flow.Launcher.Plugin.AntigravitySwitcher.Services;
 /// </summary>
 public interface IAntigravityAppController
 {
-    /// <summary>
-    /// Restarts the app's language_server backend (the Electron frontend respawns it and the
-    /// new process reads the swapped login), or launches the app when it is not running.
-    /// </summary>
-    Task<bool> RestartForLoginSwapAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Closes and immediately relaunches the full Antigravity desktop IDE.
-    /// </summary>
-    Task<bool> RestartAppAsync(CancellationToken cancellationToken = default);
-
-    /// <summary>
-    /// Optimizes the application's app.asar in-place to remove restart cooldown and limit caps.
-    /// </summary>
-    bool EnsureAsarOptimized(string? asarPath = null) => false;
+    Task<bool> RestartForLoginSwapAsync(string? savedChatPath = null, CancellationToken cancellationToken = default);
+    Task<bool> RestartAppAsync(string? savedChatPath = null, CancellationToken cancellationToken = default);
+    Task<bool> RestartBackendOnlyAsync(string? savedChatPath = null, CancellationToken cancellationToken = default);
+    bool EnsureAsarOptimized(string? asarPath = null);
 }
 
 /// <summary>
@@ -38,15 +27,19 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
     private readonly CliRunner _cli;
     private readonly IAntigravityCdpClient? _cdpClient;
+    private readonly Action<ProcessStartInfo>? _processLauncher;
     private static string? _cachedExePath;
 
-    public AntigravityAppController(CliRunner cli, IAntigravityCdpClient? cdpClient = null)
+    public AntigravityAppController(CliRunner cli, IAntigravityCdpClient? cdpClient = null, Action<ProcessStartInfo>? processLauncher = null)
     {
         _cli = cli;
         _cdpClient = cdpClient;
+        _processLauncher = processLauncher;
     }
 
-    public async Task<bool> RestartForLoginSwapAsync(CancellationToken cancellationToken = default)
+    internal static void ResetCachedExePath() => _cachedExePath = null;
+
+    public async Task<bool> RestartForLoginSwapAsync(string? savedChatPath = null, CancellationToken cancellationToken = default)
     {
         var wasJustOptimized = EnsureAsarOptimized();
         var isProcessStale = IsAppProcessStale();
@@ -62,24 +55,24 @@ public sealed class AntigravityAppController : IAntigravityAppController
             // Restart the app once so Electron loads the 0ms cooldown into memory.
             if (wasJustOptimized || isProcessStale)
             {
-                return await RestartAppAsync(cancellationToken).ConfigureAwait(false);
+                return await RestartAppAsync(savedChatPath, cancellationToken).ConfigureAwait(false);
             }
 
             // 1. Instant path: kill language_server and let Electron respawn it (< 30ms).
-            if (backendRunning && await RestartBackendAsync(cancellationToken).ConfigureAwait(false))
+            if (backendRunning && await RestartBackendAsync(savedChatPath, cancellationToken).ConfigureAwait(false))
             {
                 return true;
             }
 
             // 2. If no backend was running (e.g. hung or killed), quickly restart the app.
-            return await RestartAppAsync(cancellationToken).ConfigureAwait(false);
+            return await RestartAppAsync(savedChatPath, cancellationToken).ConfigureAwait(false);
         }
 
         // The app is not running: launch it normally; it reads the swapped login at startup.
-        return await LaunchIfFoundAsync(cancellationToken).ConfigureAwait(false);
+        return await LaunchIfFoundAsync(savedChatPath, cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<bool> RestartAppAsync(CancellationToken cancellationToken = default)
+    public async Task<bool> RestartAppAsync(string? savedChatPath = null, CancellationToken cancellationToken = default)
     {
         // Resolve exe path before closing so we already have the path primed in memory
         var exePath = await ResolveExePathAsync(cancellationToken).ConfigureAwait(false);
@@ -89,8 +82,13 @@ public sealed class AntigravityAppController : IAntigravityAppController
         }
 
         await CloseAsync(cancellationToken).ConfigureAwait(false);
-        await LaunchAsync(exePath, cancellationToken).ConfigureAwait(false);
+        await LaunchAsync(exePath, savedChatPath, cancellationToken).ConfigureAwait(false);
         return true;
+    }
+
+    public Task<bool> RestartBackendOnlyAsync(string? savedChatPath = null, CancellationToken cancellationToken = default)
+    {
+        return RestartBackendAsync(savedChatPath, cancellationToken);
     }
 
     public static string? ResolveAsarPath(string? cachedExePath = null)
@@ -248,7 +246,7 @@ public sealed class AntigravityAppController : IAntigravityAppController
         }
     }
 
-    private async Task<bool> RestartBackendAsync(CancellationToken cancellationToken)
+    private async Task<bool> RestartBackendAsync(string? savedChatPath, CancellationToken cancellationToken)
     {
         var processes = Process.GetProcessesByName(LanguageServerProcessName);
         if (processes.Length == 0)
@@ -282,11 +280,11 @@ public sealed class AntigravityAppController : IAntigravityAppController
             }
         }
 
-        _cdpClient?.TriggerAutoDismissInBackground();
+        _cdpClient?.TriggerPostRestartActionsInBackground(savedChatPath);
         return true;
     }
 
-    private async Task<bool> LaunchIfFoundAsync(CancellationToken cancellationToken)
+    private async Task<bool> LaunchIfFoundAsync(string? savedChatPath, CancellationToken cancellationToken)
     {
         var exePath = await ResolveExePathAsync(cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(exePath))
@@ -294,7 +292,7 @@ public sealed class AntigravityAppController : IAntigravityAppController
             return false;
         }
 
-        await LaunchAsync(exePath, cancellationToken).ConfigureAwait(false);
+        await LaunchAsync(exePath, savedChatPath, cancellationToken).ConfigureAwait(false);
         return true;
     }
 
@@ -416,16 +414,26 @@ public sealed class AntigravityAppController : IAntigravityAppController
         }
     }
 
-    private Task LaunchAsync(string exePath, CancellationToken cancellationToken)
+    private Task LaunchAsync(string exePath, string? savedChatPath, CancellationToken cancellationToken)
     {
         var dir = Path.GetDirectoryName(exePath);
-        Process.Start(new ProcessStartInfo
+        var startInfo = new ProcessStartInfo
         {
             FileName = exePath,
             WorkingDirectory = string.IsNullOrEmpty(dir) ? Environment.CurrentDirectory : dir,
             UseShellExecute = false
-        });
-        _cdpClient?.TriggerAutoDismissInBackground();
+        };
+
+        if (_processLauncher != null)
+        {
+            _processLauncher(startInfo);
+        }
+        else
+        {
+            Process.Start(startInfo);
+        }
+
+        _cdpClient?.TriggerPostRestartActionsInBackground(savedChatPath);
         return Task.CompletedTask;
     }
 
