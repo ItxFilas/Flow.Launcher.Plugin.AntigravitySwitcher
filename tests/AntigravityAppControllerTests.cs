@@ -56,10 +56,37 @@ public sealed class AntigravityAppControllerTests
             var updatedLength = new FileInfo(tempFile).Length;
 
             Assert.Equal(originalLength, updatedLength);
-            Assert.Contains("RESTART_COOLDOWN_MS = 0000;", updatedContent);
+            Assert.Contains("RESTART_COOLDOWN_MS =    0;", updatedContent);
             Assert.Contains("const MAX_RESTARTS=999;", updatedContent);
             Assert.DoesNotContain("RESTART_COOLDOWN_MS = 2000;", updatedContent);
             Assert.DoesNotContain("const MAX_RESTARTS = 3;", updatedContent);
+        }
+        finally
+        {
+            if (File.Exists(tempFile)) File.Delete(tempFile);
+        }
+    }
+
+    [Fact]
+    public void OptimizeAsarBytes_LegacyOctalTargetPresent_RepairsToValidJsAndReturnsTrue()
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            var content = "var config = { const RESTART_COOLDOWN_MS = 0000; const MAX_RESTARTS = 3; };";
+            File.WriteAllText(tempFile, content, Encoding.UTF8);
+            var originalLength = new FileInfo(tempFile).Length;
+
+            var result = AntigravityAppController.OptimizeAsarBytes(tempFile);
+
+            Assert.True(result);
+            var updatedContent = File.ReadAllText(tempFile, Encoding.UTF8);
+            var updatedLength = new FileInfo(tempFile).Length;
+
+            Assert.Equal(originalLength, updatedLength);
+            Assert.Contains("RESTART_COOLDOWN_MS =    0;", updatedContent);
+            Assert.Contains("const MAX_RESTARTS=999;", updatedContent);
+            Assert.DoesNotContain("RESTART_COOLDOWN_MS = 0000;", updatedContent);
         }
         finally
         {
@@ -73,7 +100,7 @@ public sealed class AntigravityAppControllerTests
         var tempFile = Path.GetTempFileName();
         try
         {
-            var optimizedContent = "function init() { const RESTART_COOLDOWN_MS = 0000; const MAX_RESTARTS=999; }";
+            var optimizedContent = "function init() { const RESTART_COOLDOWN_MS =    0; const MAX_RESTARTS=999; }";
             File.WriteAllText(tempFile, optimizedContent, Encoding.UTF8);
 
             var result = AntigravityAppController.OptimizeAsarBytes(tempFile);
@@ -122,7 +149,7 @@ public sealed class AntigravityAppControllerTests
             Assert.True(result);
             var updated = File.ReadAllText(tempFile, Encoding.UTF8);
             Assert.Equal(originalLength, new FileInfo(tempFile).Length);
-            Assert.Contains("RESTART_COOLDOWN_MS = 0000;", updated);
+            Assert.Contains("RESTART_COOLDOWN_MS =    0;", updated);
         }
         finally
         {
@@ -167,7 +194,7 @@ public sealed class AntigravityAppControllerTests
 
             Assert.True(result);
             var updated = File.ReadAllText(tempFile, Encoding.UTF8);
-            Assert.Contains("RESTART_COOLDOWN_MS = 0000;", updated);
+            Assert.Contains("RESTART_COOLDOWN_MS =    0;", updated);
             Assert.Contains("const MAX_RESTARTS=999;", updated);
         }
         finally

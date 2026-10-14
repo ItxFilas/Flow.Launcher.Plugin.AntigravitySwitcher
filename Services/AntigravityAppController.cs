@@ -187,7 +187,8 @@ public sealed class AntigravityAppController : IAntigravityAppController
             }
 
             var target1 = Encoding.UTF8.GetBytes("RESTART_COOLDOWN_MS = 2000;");
-            var replacement1 = Encoding.UTF8.GetBytes("RESTART_COOLDOWN_MS = 0000;");
+            var target1Legacy = Encoding.UTF8.GetBytes("RESTART_COOLDOWN_MS = 0000;");
+            var replacement1 = Encoding.UTF8.GetBytes("RESTART_COOLDOWN_MS =    0;");
             var target2 = Encoding.UTF8.GetBytes("const MAX_RESTARTS = 3;");
             var replacement2 = Encoding.UTF8.GetBytes("const MAX_RESTARTS=999;");
 
@@ -206,6 +207,7 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
             var replacements = new List<(long offset, byte[] data)>();
             FindOccurrences(fileBytes, target1, replacement1, replacements);
+            FindOccurrences(fileBytes, target1Legacy, replacement1, replacements);
             FindOccurrences(fileBytes, target2, replacement2, replacements);
 
             if (replacements.Count == 0)
