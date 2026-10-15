@@ -198,13 +198,19 @@ public sealed class QueryRouter
             ? accounts.Max(a => AccountFormatter.ApproximateVisualWidth(a.DisplayName))
             : 0;
 
+        var sortedAccounts = accounts
+            .OrderByDescending(a => a.IsActive)
+            .ThenByDescending(a => a.RemainingPercent)
+            .ThenBy(a => a.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
         if (string.IsNullOrWhiteSpace(filter))
         {
             results.Add(ResultFactory.CreateNextSwitchResult(
                 next,
                 async _ => next is not null && TryStartSwitch(next)));
 
-            foreach (var account in accounts)
+            foreach (var account in sortedAccounts)
             {
                 var captured = account;
                 results.Add(ResultFactory.CreateAccountResult(

@@ -295,6 +295,40 @@ public sealed class QueryRouterTests
     }
 
     [Fact]
+    public async Task RouteAsync_EmptyQuery_SortsAccountsByActiveThenQuotaDescendingThenAlphabetical()
+    {
+        var cache = new AccountCache();
+        var accounts = new List<AccountInfo>
+        {
+            new() { Id = "z-tied", Email = "z.tied@example.com", RemainingPercent = 80 },
+            new() { Id = "a-tied", Email = "a.tied@example.com", RemainingPercent = 80 },
+            new() { Id = "low-quota", Email = "low@example.com", RemainingPercent = 20 },
+            new() { Id = "active-acc", Email = "current@example.com", IsActive = true, RemainingPercent = 50 }
+        };
+        cache.Set(accounts);
+
+        var service = new AccountService(new CliRunner(new SwitcherLocator()), new DashboardClient(), cache);
+        var router = new QueryRouter(service);
+
+        var results = await router.RouteAsync("");
+
+        // Result 0: Switch to next account banner -> next should be "a.tied@example.com" (best quota 80% + alphabetical tie-breaker)
+        Assert.Contains("a.tied@example.com", results[0].SubTitle);
+
+        // Result 1: Active account (always on top of accounts list)
+        Assert.Contains("current@example.com", results[1].Title);
+
+        // Result 2: a.tied@example.com (80% quota, 'a' before 'z')
+        Assert.Contains("a.tied@example.com", results[2].Title);
+
+        // Result 3: z.tied@example.com (80% quota, 'z' after 'a')
+        Assert.Contains("z.tied@example.com", results[3].Title);
+
+        // Result 4: low@example.com (20% quota)
+        Assert.Contains("low@example.com", results[4].Title);
+    }
+
+    [Fact]
     public async Task RouteAsync_RemoveCommand_ListsAndFiltersAccounts()
     {
         var cache = new AccountCache();

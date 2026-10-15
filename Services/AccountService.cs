@@ -204,7 +204,7 @@ public sealed class AccountService
 
         return eligible
             .OrderByDescending(a => a.RemainingPercent)
-            .ThenBy(a => a.Email, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(a => a.DisplayName, StringComparer.OrdinalIgnoreCase)
             .First();
     }
 
