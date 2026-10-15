@@ -355,8 +355,33 @@ public sealed class AntigravityCdpClientTests
 
         var ex1 = Record.Exception(() => client.TriggerPostRestartActionsInBackground(null));
         var ex2 = Record.Exception(() => client.TriggerPostRestartActionsInBackground("/c/valid-path-123"));
+        var ex3 = Record.Exception(() => client.TriggerPostRestartActionsInBackground("/c/valid-path-123", autoContinue: true));
 
         Assert.Null(ex1);
         Assert.Null(ex2);
+        Assert.Null(ex3);
+    }
+
+    [Fact]
+    public void AutoContinueScript_ContainsCorrectSelectorsAndEventDispatch()
+    {
+        var script = AntigravityCdpClient.AutoContinueScript;
+        Assert.Contains("Message input", script);
+        Assert.Contains("contenteditable", script);
+        Assert.Contains("Continue", script);
+        Assert.Contains("insertText", script);
+        Assert.Contains("Enter", script);
+    }
+
+    [Fact]
+    public async Task AutoContinueChatAsync_WithMissingPort_ReturnsFalse()
+    {
+        var nonExistentPath = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var client = new AntigravityCdpClient(portFilePath: nonExistentPath);
+
+        var result = await client.AutoContinueChatAsync();
+
+        Assert.False(result);
     }
 }
+

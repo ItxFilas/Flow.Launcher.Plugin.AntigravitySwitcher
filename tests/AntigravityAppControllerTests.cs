@@ -24,7 +24,7 @@ public sealed class AntigravityAppControllerTests
         {
             TriggerCallCount++;
         }
-        public void TriggerPostRestartActionsInBackground(string? savedChatPath = null)
+        public void TriggerPostRestartActionsInBackground(string? savedChatPath = null, bool autoContinue = true)
         {
             PostRestartActionCallCount++;
             LastPostRestartChatPath = savedChatPath;

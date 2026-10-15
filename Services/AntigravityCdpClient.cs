@@ -18,12 +18,61 @@ public interface IAntigravityCdpClient
     Task<bool> RestoreActiveChatAsync(string chatPath, CancellationToken cancellationToken = default) => Task.FromResult(false);
     Task<bool> AutoDismissSecurityNoticeAsync(CancellationToken cancellationToken = default);
     void TriggerAutoDismissInBackground();
-    void TriggerPostRestartActionsInBackground(string? savedChatPath = null) { }
+    Task<bool> AutoContinueChatAsync(CancellationToken cancellationToken = default) => Task.FromResult(false);
+    void TriggerPostRestartActionsInBackground(string? savedChatPath = null, bool autoContinue = true) { }
 }
 
 public sealed class AntigravityCdpClient : IAntigravityCdpClient
 {
     private static readonly Regex ChatPathRegex = new(@"^/c/[a-zA-Z0-9_\-]+(\?.*)?$", RegexOptions.Compiled);
+
+    public const string AutoContinueScript = @"(() => {
+        // 1. If there's an explicit Continue / Retry / Resume button, click it
+        const buttons = Array.from(document.querySelectorAll('button'));
+        const retryBtn = buttons.find(b => {
+            const t = (b.innerText || b.textContent || b.getAttribute('aria-label') || '').toLowerCase();
+            return (t.includes('continue') || t.includes('retry') || t.includes('resume')) && !b.disabled;
+        });
+        if (retryBtn) {
+            retryBtn.click();
+            return true;
+        }
+
+        // 2. Find message input box
+        const input = document.querySelector('[aria-label=""Message input""]') ||
+                      document.querySelector('[contenteditable=""true""]');
+        if (!input) return false;
+
+        // Check if agent is currently actively running (Cancel / Stop button present)
+        const isRunning = buttons.some(b => {
+            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+            return aria.includes('cancel') || aria.includes('stop execution');
+        });
+        if (isRunning) return false;
+
+        // 3. Focus, type 'Continue', and submit
+        input.focus();
+        document.execCommand('insertText', false, 'Continue');
+
+        // 4. Submit via Enter keydown or clicking send button
+        const enterEvent = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true
+        });
+        input.dispatchEvent(enterEvent);
+
+        const sendBtn = Array.from(input.parentElement?.parentElement?.querySelectorAll('button') || [])
+            .find(b => !b.disabled && (b.getAttribute('aria-label') || '').toLowerCase().includes('send'));
+        if (sendBtn) {
+            sendBtn.click();
+        }
+
+        return true;
+    })()";
 
     public const string DismissNoticeScript = @"(() => {
         const headings = Array.from(document.querySelectorAll('h1, h2, h3, div'));
@@ -233,21 +282,73 @@ public sealed class AntigravityCdpClient : IAntigravityCdpClient
         return false;
     }
 
-    public void TriggerAutoDismissInBackground() => TriggerPostRestartActionsInBackground(null);
+    public async Task<bool> AutoContinueChatAsync(CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var port = ResolveActivePort();
+            if (port is null) return false;
 
-    public void TriggerPostRestartActionsInBackground(string? savedChatPath = null)
+            var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(5);
+            while (DateTimeOffset.UtcNow < deadline && !cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var response = await _http.GetStringAsync($"http://127.0.0.1:{port}/json", cancellationToken).ConfigureAwait(false);
+                    using var doc = JsonDocument.Parse(response);
+                    foreach (var element in doc.RootElement.EnumerateArray())
+                    {
+                        if (element.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "page" &&
+                            element.TryGetProperty("webSocketDebuggerUrl", out var wsProp) && wsProp.GetString() is { } wsUrl)
+                        {
+                            var continued = await TryEvaluateScriptAsync(wsUrl, AutoContinueScript, cancellationToken).ConfigureAwait(false);
+                            if (continued) return true;
+                        }
+                    }
+                }
+                catch
+                {
+                }
+
+                try
+                {
+                    await Task.Delay(200, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public void TriggerAutoDismissInBackground() => TriggerPostRestartActionsInBackground(null, autoContinue: false);
+
+    public void TriggerPostRestartActionsInBackground(string? savedChatPath = null, bool autoContinue = true)
     {
         _ = Task.Run(async () =>
         {
             try
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
                 if (!string.IsNullOrWhiteSpace(savedChatPath))
                 {
                     await RestoreActiveChatAsync(savedChatPath, cts.Token).ConfigureAwait(false);
                 }
 
+                await Task.Delay(500, cts.Token).ConfigureAwait(false);
                 await AutoDismissSecurityNoticeAsync(cts.Token).ConfigureAwait(false);
+
+                if (autoContinue)
+                {
+                    await AutoContinueChatAsync(cts.Token).ConfigureAwait(false);
+                }
             }
             catch
             {
