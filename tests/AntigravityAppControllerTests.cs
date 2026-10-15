@@ -328,6 +328,10 @@ public sealed class AntigravityAppControllerTests
             Environment.SetEnvironmentVariable("http_proxy", null);
             Environment.SetEnvironmentVariable("no_proxy", null);
             Environment.SetEnvironmentVariable("ANTIGRAVITY_AUTOSWITCH", null);
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_AUTOSWITCH", null, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("https_proxy", null, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("http_proxy", null, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("no_proxy", null, EnvironmentVariableTarget.User);
         }
     }
 
@@ -361,7 +365,16 @@ public sealed class AntigravityAppControllerTests
             Environment.SetEnvironmentVariable("ANTIGRAVITY_BIN", null);
             AntigravityAppController.ResetCachedExePath();
             if (File.Exists(tempExe)) File.Delete(tempExe);
+            Environment.SetEnvironmentVariable("https_proxy", null);
+            Environment.SetEnvironmentVariable("http_proxy", null);
+            Environment.SetEnvironmentVariable("no_proxy", null);
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_AUTOSWITCH", null);
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_AUTOSWITCH", null, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("https_proxy", null, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("http_proxy", null, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("no_proxy", null, EnvironmentVariableTarget.User);
         }
     }
 }
+
 

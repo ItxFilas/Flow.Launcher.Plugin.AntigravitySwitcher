@@ -36,8 +36,8 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
     public static bool IsAutoSwitchEnabled()
     {
-        var val = Environment.GetEnvironmentVariable(AutoSwitchEnvVar, EnvironmentVariableTarget.User)
-               ?? Environment.GetEnvironmentVariable(AutoSwitchEnvVar);
+        var val = Environment.GetEnvironmentVariable(AutoSwitchEnvVar)
+               ?? Environment.GetEnvironmentVariable(AutoSwitchEnvVar, EnvironmentVariableTarget.User);
         return string.Equals(val, "true", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -63,7 +63,7 @@ public sealed class AntigravityAppController : IAntigravityAppController
         {
             try
             {
-                Environment.SetEnvironmentVariable(AutoSwitchEnvVar, val, EnvironmentVariableTarget.User);
+                Environment.SetEnvironmentVariable(AutoSwitchEnvVar, enabled ? "true" : null, EnvironmentVariableTarget.User);
                 Environment.SetEnvironmentVariable("https_proxy", enabled ? ProxyUrl : null, EnvironmentVariableTarget.User);
                 Environment.SetEnvironmentVariable("http_proxy", enabled ? ProxyUrl : null, EnvironmentVariableTarget.User);
                 Environment.SetEnvironmentVariable("no_proxy", enabled ? NoProxyList : null, EnvironmentVariableTarget.User);

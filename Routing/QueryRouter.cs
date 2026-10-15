@@ -14,6 +14,7 @@ public enum CommandKind
     Refresh,
     Status,
     Restart,
+    Auto,
     Help
 }
 
@@ -53,6 +54,7 @@ public sealed class QueryRouter
             "refresh" => new ParsedCommand(CommandKind.Refresh, argument),
             "status" => new ParsedCommand(CommandKind.Status, argument),
             "restart" => new ParsedCommand(CommandKind.Restart, argument),
+            "auto" or "autoswitch" => new ParsedCommand(CommandKind.Auto, argument),
             "help" => new ParsedCommand(CommandKind.Help, argument),
             _ => new ParsedCommand(CommandKind.ListAccounts, trimmed)
         };
@@ -75,6 +77,7 @@ public sealed class QueryRouter
                 CommandKind.Refresh => [RefreshResult()],
                 CommandKind.Restart => RestartResults(parsed.Argument),
                 CommandKind.Status => await QueryStatusAsync(token).ConfigureAwait(false),
+                CommandKind.Auto => AutoSwitchResults(),
                 CommandKind.Help => HelpResults(),
                 _ => await QueryAccountsAsync(parsed.Argument, token).ConfigureAwait(false)
             };
@@ -340,12 +343,41 @@ public sealed class QueryRouter
         try
         {
             var status = await _service.StatusAsync(token).ConfigureAwait(false);
-            return [ResultFactory.CreateStatusResult(status)];
+            var autoStatus = AntigravityAppController.IsAutoSwitchEnabled() ? "Auto-Switch: 1 (ON)" : "Auto-Switch: 0 (OFF)";
+            var combinedStatus = string.IsNullOrWhiteSpace(status) ? autoStatus : $"{status}\n{autoStatus}";
+            return [ResultFactory.CreateStatusResult(combinedStatus)];
         }
         catch (Exception ex)
         {
             return [ResultFactory.CreateErrorResult("Status failed", ex.Message)];
         }
+    }
+
+    private List<Result> AutoSwitchResults()
+    {
+        var isEnabled = AntigravityAppController.IsAutoSwitchEnabled();
+        var nextState = !isEnabled;
+        var currentVal = isEnabled ? "1 (ON)" : "0 (OFF)";
+        var nextVal = nextState ? "1 (ON)" : "0 (OFF)";
+
+        return
+        [
+            new Result
+            {
+                Title = $"Auto-Switch: {currentVal}",
+                SubTitle = $"Press Enter to switch to {nextVal}",
+                IcoPath = NotifyIconPath(ResultFactory.AppIcon),
+                Action = _ =>
+                {
+                    AntigravityAppController.SetAutoSwitch(nextState);
+                    _context?.API?.ShowMsg(
+                        "Antigravity Switcher",
+                        $"Auto-Switch: {(nextState ? "1" : "0")}",
+                        NotifyIconPath(ResultFactory.AppIcon));
+                    return true;
+                }
+            }
+        ];
     }
 
     private Result AddAccountResult() =>
@@ -453,7 +485,8 @@ public sealed class QueryRouter
         Hint("ag add", "Add account (OAuth)", ResultFactory.AddIcon),
         Hint("ag remove", "Remove account", ResultFactory.RemoveIcon),
         Hint("ag refresh", "Refresh quotas", ResultFactory.RefreshIcon),
-        Hint("ag restart", "Restart backend or IDE", ResultFactory.RestartIcon)
+        Hint("ag restart", "Restart backend or IDE", ResultFactory.RestartIcon),
+        Hint("ag auto", "Auto-switch failover (0/1)", ResultFactory.AppIcon)
     ];
 
     private List<Result> HelpResults() => _helpResults ??=
@@ -463,6 +496,7 @@ public sealed class QueryRouter
         Hint("ag remove [filter]", "Remove account", ResultFactory.RemoveIcon),
         Hint("ag refresh", "Refresh quotas", ResultFactory.RefreshIcon),
         Hint("ag restart", "Restart backend or IDE", ResultFactory.RestartIcon),
+        Hint("ag auto", "Toggle 429 auto-failover (0=OFF, 1=ON)", ResultFactory.AppIcon),
         Hint("ag status", "Switcher status", ResultFactory.AppIcon)
     ];
 

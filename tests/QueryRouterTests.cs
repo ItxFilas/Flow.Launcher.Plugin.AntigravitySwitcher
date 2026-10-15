@@ -18,6 +18,8 @@ public sealed class QueryRouterTests
     [InlineData("refresh", CommandKind.Refresh)]
     [InlineData("status", CommandKind.Status)]
     [InlineData("restart", CommandKind.Restart)]
+    [InlineData("auto", CommandKind.Auto)]
+    [InlineData("autoswitch", CommandKind.Auto)]
     [InlineData("help", CommandKind.Help)]
     [InlineData("google@gmail.com", CommandKind.ListAccounts)]
     public void ParseCommand_IdentifiesCommandKind(string queryText, CommandKind expected)
@@ -457,6 +459,52 @@ public sealed class QueryRouterTests
         Assert.Single(messages);
         Assert.Equal($"Already signed in as {activeAccount.DisplayName}", messages[0].SubTitle);
         Assert.DoesNotContain(messages, m => m.SubTitle.StartsWith("Switching to", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task RouteAsync_AutoCommand_ReturnsBinaryToggleResultAndTogglesState()
+    {
+        var context = new PluginInitContext();
+        var messages = new List<(string Title, string SubTitle, string? Icon)>();
+        var api = System.Reflection.DispatchProxy.Create<Flow.Launcher.Plugin.IPublicAPI, TestPublicApiProxy>();
+        var proxy = (TestPublicApiProxy)(object)api;
+        proxy.OnShowMsg = (title, subTitle, icon) => messages.Add((title, subTitle, icon));
+        typeof(PluginInitContext).GetProperty("API")?.SetValue(context, api);
+
+        var cache = new AccountCache();
+        var service = new AccountService(new CliRunner(new SwitcherLocator()), new DashboardClient(), cache);
+        var router = new QueryRouter(service, context);
+
+        try
+        {
+            AntigravityAppController.SetAutoSwitch(false, setProcessOnly: true);
+
+            var resultsOff = await router.RouteAsync("auto");
+            Assert.Single(resultsOff);
+            Assert.Contains("Auto-Switch: 0 (OFF)", resultsOff[0].Title);
+            Assert.Contains("switch to 1 (ON)", resultsOff[0].SubTitle);
+
+            var actionResult = resultsOff[0].Action!(new Flow.Launcher.Plugin.ActionContext());
+            Assert.True(actionResult);
+            Assert.True(AntigravityAppController.IsAutoSwitchEnabled());
+            Assert.Contains(messages, m => m.SubTitle == "Auto-Switch: 1");
+
+            var resultsOn = await router.RouteAsync("auto");
+            Assert.Single(resultsOn);
+            Assert.Contains("Auto-Switch: 1 (ON)", resultsOn[0].Title);
+            Assert.Contains("switch to 0 (OFF)", resultsOn[0].SubTitle);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("https_proxy", null);
+            Environment.SetEnvironmentVariable("http_proxy", null);
+            Environment.SetEnvironmentVariable("no_proxy", null);
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_AUTOSWITCH", null);
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_AUTOSWITCH", null, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("https_proxy", null, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("http_proxy", null, EnvironmentVariableTarget.User);
+            Environment.SetEnvironmentVariable("no_proxy", null, EnvironmentVariableTarget.User);
+        }
     }
 
     private sealed class StubAppController : IAntigravityAppController
