@@ -25,6 +25,8 @@ public sealed class QueryRouter
     private readonly PluginInitContext? _context;
     private int _switchInProgress;
     private int _isRefreshing;
+    private DateTimeOffset _lastBackgroundRefresh = DateTimeOffset.MinValue;
+    private static readonly TimeSpan MinBackgroundRefreshInterval = TimeSpan.FromSeconds(2);
 
     public QueryRouter(AccountService service, PluginInitContext? context = null)
     {
@@ -128,6 +130,37 @@ public sealed class QueryRouter
         ];
     }
 
+    private void TriggerBackgroundQuotaReload()
+    {
+        if (DateTimeOffset.UtcNow - _lastBackgroundRefresh < MinBackgroundRefreshInterval)
+        {
+            return;
+        }
+
+        if (Interlocked.CompareExchange(ref _isRefreshing, 1, 0) != 0)
+        {
+            return;
+        }
+
+        _lastBackgroundRefresh = DateTimeOffset.UtcNow;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _service.RefreshQuotasAsync(CancellationToken.None).ConfigureAwait(false);
+                await _service.ListAccountsAsync(forceRefresh: true, CancellationToken.None).ConfigureAwait(false);
+                _context?.API?.ReQuery(reselect: false);
+            }
+            catch
+            {
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _isRefreshing, 0);
+            }
+        }, CancellationToken.None);
+    }
+
     private async Task<List<Result>> QueryAccountsAsync(string filter, CancellationToken token)
     {
         IReadOnlyList<AccountInfo> accounts;
@@ -136,28 +169,18 @@ public sealed class QueryRouter
             if (_service.TryGetCached(out var cached, out var isStale) && cached.Count > 0)
             {
                 accounts = cached;
-                if (isStale && Interlocked.CompareExchange(ref _isRefreshing, 1, 0) == 0)
+                if (string.IsNullOrWhiteSpace(filter) || isStale)
                 {
-                    _ = Task.Run(async () =>
-                    {
-                        try
-                        {
-                            await _service.ListAccountsAsync(forceRefresh: true, CancellationToken.None).ConfigureAwait(false);
-                            _context?.API?.ReQuery(reselect: false);
-                        }
-                        catch
-                        {
-                        }
-                        finally
-                        {
-                            Interlocked.Exchange(ref _isRefreshing, 0);
-                        }
-                    }, CancellationToken.None);
+                    TriggerBackgroundQuotaReload();
                 }
             }
             else
             {
                 accounts = await _service.ListAccountsAsync(forceRefresh: false, token).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(filter))
+                {
+                    TriggerBackgroundQuotaReload();
+                }
             }
         }
         catch (Exception ex)
@@ -167,6 +190,10 @@ public sealed class QueryRouter
 
         var results = new List<Result>();
         var next = AccountService.SelectNextAvailable(accounts);
+
+        var maxVisualWidth = accounts.Count > 0
+            ? accounts.Max(a => AccountFormatter.ApproximateVisualWidth(a.DisplayName))
+            : 0;
 
         if (string.IsNullOrWhiteSpace(filter))
         {
@@ -179,7 +206,8 @@ public sealed class QueryRouter
                 var captured = account;
                 results.Add(ResultFactory.CreateAccountResult(
                     captured,
-                    async _ => TryStartSwitch(captured)));
+                    async _ => TryStartSwitch(captured),
+                    targetVisualWidth: maxVisualWidth));
             }
 
             results.AddRange(CommandHints());
@@ -231,7 +259,8 @@ public sealed class QueryRouter
                 results.Add(ResultFactory.CreateAccountResult(
                     captured,
                     async _ => TryStartSwitch(captured),
-                    scoreOverride: score));
+                    scoreOverride: score,
+                    targetVisualWidth: maxVisualWidth));
             }
 
             if (results.Count == 0)
@@ -371,7 +400,7 @@ public sealed class QueryRouter
                     var restarted = await _service.RestartBackendOnlyAsync(CancellationToken.None).ConfigureAwait(false);
                     if (restarted)
                     {
-                        _context?.API?.ShowMsg("Antigravity Restart", "Language server backend restarted instantly.", NotifyIconPath(ResultFactory.AppIcon));
+                        _context?.API?.ShowMsg("Antigravity Restart", "Language server backend restarted instantly.", NotifyIconPath(ResultFactory.RestartIcon));
                     }
                     else
                     {
@@ -398,7 +427,7 @@ public sealed class QueryRouter
                     var restarted = await _service.RestartAppAsync(CancellationToken.None).ConfigureAwait(false);
                     if (restarted)
                     {
-                        _context?.API?.ShowMsg("Antigravity Restart", "Antigravity IDE relaunched successfully.", NotifyIconPath(ResultFactory.AppIcon));
+                        _context?.API?.ShowMsg("Antigravity Restart", "Antigravity IDE relaunched successfully.", NotifyIconPath(ResultFactory.RestartIcon));
                     }
                     else
                     {
@@ -424,7 +453,7 @@ public sealed class QueryRouter
         Hint("ag add", "Add account (OAuth)", ResultFactory.AddIcon),
         Hint("ag remove", "Remove account", ResultFactory.RemoveIcon),
         Hint("ag refresh", "Refresh quotas", ResultFactory.RefreshIcon),
-        Hint("ag restart", "Restart backend or IDE", ResultFactory.AppIcon)
+        Hint("ag restart", "Restart backend or IDE", ResultFactory.RestartIcon)
     ];
 
     private List<Result> HelpResults() => _helpResults ??=
@@ -433,7 +462,7 @@ public sealed class QueryRouter
         Hint("ag add", "Add Google account", ResultFactory.AddIcon),
         Hint("ag remove [filter]", "Remove account", ResultFactory.RemoveIcon),
         Hint("ag refresh", "Refresh quotas", ResultFactory.RefreshIcon),
-        Hint("ag restart", "Restart backend or IDE", ResultFactory.AppIcon),
+        Hint("ag restart", "Restart backend or IDE", ResultFactory.RestartIcon),
         Hint("ag status", "Switcher status", ResultFactory.AppIcon)
     ];
 

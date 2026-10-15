@@ -13,13 +13,44 @@ public static class AccountFormatter
 
     public static string FormatPercent(double percent) => percent < 0 ? "N/A" : $"{percent:0}%";
 
-    public static string FormatTitle(AccountInfo account)
+    public static double ApproximateVisualWidth(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        var width = 0.0;
+        foreach (var c in text)
+        {
+            width += c switch
+            {
+                'i' or 'l' or '.' or ':' or ';' or '!' or '|' or '\'' => 1.0,
+                'f' or 'r' or 't' or 'j' => 1.3,
+                'm' or 'M' or 'W' => 3.1,
+                'w' => 2.6,
+                '@' => 3.5,
+                ' ' => 1.0,
+                _ => char.IsUpper(c) ? 2.4 : 2.0
+            };
+        }
+        return width;
+    }
+
+    public static string FormatTitle(AccountInfo account, double targetVisualWidth = 0)
     {
         var baseName = account.DisplayName;
-        var activeTag = account.IsActive ? " [ACTIVE]" : "";
         var bar = FormatQuotaBar(account.RemainingPercent);
-        var quotaSummary = string.IsNullOrEmpty(bar) ? "" : $"  {bar} {FormatPercent(account.RemainingPercent)}";
-        return $"{baseName}{activeTag}{quotaSummary}";
+        var paddingSpaces = 0;
+        if (targetVisualWidth > 0 && !string.IsNullOrEmpty(bar))
+        {
+            var diff = targetVisualWidth - ApproximateVisualWidth(baseName);
+            if (diff > 0)
+            {
+                paddingSpaces = (int)Math.Round(diff);
+            }
+        }
+
+        var padding = paddingSpaces > 0 ? new string(' ', paddingSpaces) : "";
+        var quotaSummary = string.IsNullOrEmpty(bar) ? "" : $"{padding}  {bar} {FormatPercent(account.RemainingPercent)}";
+        var activeTag = account.IsActive ? " [ACTIVE]" : "";
+        return $"{baseName}{quotaSummary}{activeTag}";
     }
 
     public static string FormatSubtitle(AccountInfo account)

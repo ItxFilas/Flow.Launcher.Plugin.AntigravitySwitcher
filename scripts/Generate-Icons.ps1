@@ -65,6 +65,17 @@ function Get-RoundedTrianglePath {
     return $path
 }
 
+function Get-SparkPath {
+    param([single]$cx = 64, [single]$cy = 64, [single]$outerR = 15, [single]$innerR = 4.5)
+    $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
+    $path.AddBezier([System.Drawing.PointF]::new($cx, $cy - $outerR), [System.Drawing.PointF]::new($cx, $cy - $innerR), [System.Drawing.PointF]::new($cx + $innerR, $cy), [System.Drawing.PointF]::new($cx + $outerR, $cy))
+    $path.AddBezier([System.Drawing.PointF]::new($cx + $outerR, $cy), [System.Drawing.PointF]::new($cx + $innerR, $cy), [System.Drawing.PointF]::new($cx, $cy + $innerR), [System.Drawing.PointF]::new($cx, $cy + $outerR))
+    $path.AddBezier([System.Drawing.PointF]::new($cx, $cy + $outerR), [System.Drawing.PointF]::new($cx, $cy + $innerR), [System.Drawing.PointF]::new($cx - $innerR, $cy), [System.Drawing.PointF]::new($cx - $outerR, $cy))
+    $path.AddBezier([System.Drawing.PointF]::new($cx - $outerR, $cy), [System.Drawing.PointF]::new($cx - $innerR, $cy), [System.Drawing.PointF]::new($cx, $cy - $innerR), [System.Drawing.PointF]::new($cx, $cy - $outerR))
+    $path.CloseFigure()
+    return $path
+}
+
 # Fluent Palette Colors
 $white = [System.Drawing.Color]::White
 $whiteHighlight = [System.Drawing.Color]::FromArgb(45, 255, 255, 255)
@@ -86,57 +97,72 @@ $crimson = [System.Drawing.Color]::FromArgb(255, 220, 38, 38)       # #DC2626
 
 $azureLight = [System.Drawing.Color]::FromArgb(255, 59, 130, 246)   # #3B82F6
 $azureDark = [System.Drawing.Color]::FromArgb(255, 29, 78, 216)     # #1D4ED8
+$noSleepBlue = [System.Drawing.Color]::FromArgb(255, 88, 166, 255) # #58A6FF
+$royalBlue = [System.Drawing.Color]::FromArgb(255, 37, 99, 235)   # #2563EB
 
 $roseLight = [System.Drawing.Color]::FromArgb(255, 244, 63, 94)     # #F43F5E
 $roseDark = [System.Drawing.Color]::FromArgb(255, 225, 29, 72)      # #E11D48
 
+
+function New-PulseCanvas {
+    $canvas = New-IconCanvas
+    $restartBrush = [System.Drawing.Drawing2D.LinearGradientBrush]::new(
+        [System.Drawing.PointF]::new(20, 20),
+        [System.Drawing.PointF]::new(108, 108),
+        $royalBlue,
+        $noSleepBlue
+    )
+
+    $restartPen = [System.Drawing.Pen]::new($restartBrush, 10.5)
+    $restartPen.StartCap = [System.Drawing.Drawing2D.LineCap]::Round
+    $restartPen.EndCap = [System.Drawing.Drawing2D.LineCap]::Round
+
+    # Clockwise dual arcs
+    $canvas.Graphics.DrawArc($restartPen, 26, 26, 76, 76, 195, 140)
+    $canvas.Graphics.DrawArc($restartPen, 26, 26, 76, 76, 15, 140)
+    $restartPen.Dispose()
+
+    # Tangent arrowheads
+    $head1 = [System.Drawing.PointF[]]@(
+        [System.Drawing.PointF]::new(86, 46),
+        [System.Drawing.PointF]::new(110, 46),
+        [System.Drawing.PointF]::new(98, 68)
+    )
+    $hb1 = [System.Drawing.SolidBrush]::new($noSleepBlue)
+    $canvas.Graphics.FillPolygon($hb1, $head1)
+    $hb1.Dispose()
+
+    $head2 = [System.Drawing.PointF[]]@(
+        [System.Drawing.PointF]::new(18, 82),
+        [System.Drawing.PointF]::new(42, 82),
+        [System.Drawing.PointF]::new(30, 60)
+    )
+    $hb2 = [System.Drawing.SolidBrush]::new($royalBlue)
+    $canvas.Graphics.FillPolygon($hb2, $head2)
+    $hb2.Dispose()
+
+    # Outer spark: bright electric cyan #38BDF8
+    $sparkOuter = Get-SparkPath -cx 64 -cy 64 -outerR 16 -innerR 4.5
+    $sparkOuterBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(255, 56, 189, 248))
+    $canvas.Graphics.FillPath($sparkOuterBrush, $sparkOuter)
+    $sparkOuterBrush.Dispose()
+    $sparkOuter.Dispose()
+
+    # Inner spark core: pure bright white diamond
+    $sparkInner = Get-SparkPath -cx 64 -cy 64 -outerR 8 -innerR 2.5
+    $sparkInnerBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(245, 255, 255, 255))
+    $canvas.Graphics.FillPath($sparkInnerBrush, $sparkInner)
+    $sparkInnerBrush.Dispose()
+    $sparkInner.Dispose()
+
+    $restartBrush.Dispose()
+    return $canvas
+}
+
 # ==============================================================================
-# 1. app.png - Dual concentric gravitational rings with indigo-to-cyan gradient
-#    and central nucleus on transparent canvas
+# 1. app.png - Main Launcher Plugin Icon (Precision Relaunch Pulse)
 # ==============================================================================
-$canvas = New-IconCanvas
-$orbitBrush = [System.Drawing.Drawing2D.LinearGradientBrush]::new(
-    [System.Drawing.PointF]::new(16, 16),
-    [System.Drawing.PointF]::new(112, 112),
-    $indigoLight,
-    $cyanLight
-)
-
-# Outer gravitational ring
-$penOuter = [System.Drawing.Pen]::new($orbitBrush, 7.0)
-$canvas.Graphics.DrawEllipse($penOuter, 16, 16, 96, 96)
-$penOuter.Dispose()
-
-# Inner gravitational ring
-$penInner = [System.Drawing.Pen]::new($orbitBrush, 5.5)
-$canvas.Graphics.DrawEllipse($penInner, 33, 33, 62, 62)
-$penInner.Dispose()
-
-# Gravitational orbital nodes / particles
-$nodeBrushOuter = [System.Drawing.SolidBrush]::new($cyanLight)
-$canvas.Graphics.FillEllipse($nodeBrushOuter, 94.0, 26.0, 9.0, 9.0)
-$nodeBrushOuter.Dispose()
-
-$nodeBrushInner = [System.Drawing.SolidBrush]::new($indigoLight)
-$canvas.Graphics.FillEllipse($nodeBrushInner, 25.0, 59.0, 7.0, 7.0)
-$nodeBrushInner.Dispose()
-
-# Central nucleus with gradient fill
-$nucleusBrush = [System.Drawing.Drawing2D.LinearGradientBrush]::new(
-    [System.Drawing.PointF]::new(49, 49),
-    [System.Drawing.PointF]::new(79, 79),
-    $cyanLight,
-    $indigoDark
-)
-$canvas.Graphics.FillEllipse($nucleusBrush, 49, 49, 30, 30)
-$nucleusBrush.Dispose()
-
-# Nucleus inner specular highlight
-$specularBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(200, 255, 255, 255))
-$canvas.Graphics.FillEllipse($specularBrush, 56, 56, 7, 7)
-$specularBrush.Dispose()
-
-$orbitBrush.Dispose()
+$canvas = New-PulseCanvas
 Save-Icon -Canvas $canvas -Name 'app.png'
 
 # ==============================================================================
@@ -356,5 +382,11 @@ $canvas.Graphics.DrawLine($minusPen, 32.0, 64.0, 96.0, 64.0)
 $minusPen.Dispose()
 $minusBrush.Dispose()
 Save-Icon -Canvas $canvas -Name 'remove.png'
+
+# ==============================================================================
+# 9. restart.png - Precision Relaunch Pulse (Royal Blue to NoSleep Azure #58A6FF)
+# ==============================================================================
+$canvas = New-PulseCanvas
+Save-Icon -Canvas $canvas -Name 'restart.png'
 
 Write-Host "Fluent 128x128 icon generation complete."

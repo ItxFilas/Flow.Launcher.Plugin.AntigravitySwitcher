@@ -112,4 +112,18 @@ public sealed class AccountFormatterTests
     {
         Assert.Equal(expected, AccountFormatter.FormatPercent(percent));
     }
+
+    [Fact]
+    public void FormatTitle_WithTargetVisualWidth_PadsShorterDisplayName()
+    {
+        var longer = new AccountInfo { Email = "dlestikfilipek@gmail.com", FiveHourPercent = 50, WeeklyPercent = 50 };
+        var shorter = new AccountInfo { Email = "fildadlestik@gmail.com", FiveHourPercent = 50, WeeklyPercent = 50 };
+
+        var targetWidth = AccountFormatter.ApproximateVisualWidth(longer.DisplayName);
+        var titleLonger = AccountFormatter.FormatTitle(longer, targetWidth);
+        var titleShorter = AccountFormatter.FormatTitle(shorter, targetWidth);
+
+        Assert.Contains("dlestikfilipek@gmail.com  ▰▰▱", titleLonger);
+        Assert.Contains("fildadlestik@gmail.com     ▰▰▱", titleShorter);
+    }
 }

@@ -159,7 +159,7 @@ public sealed class QueryRouterTests
 
         var restartResult = ResultFactory.CreateRestartResult();
         Assert.Equal("Restart Antigravity Language Server", restartResult.Title);
-        Assert.Equal(ResultFactory.AppIcon, restartResult.IcoPath);
+        Assert.Equal(ResultFactory.RestartIcon, restartResult.IcoPath);
 
         var statusResult = ResultFactory.CreateStatusResult("Connected\nPort: 8080\nStatus: OK");
         Assert.Equal("Connected", statusResult.Title);

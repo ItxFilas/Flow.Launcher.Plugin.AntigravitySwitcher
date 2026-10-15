@@ -1,4 +1,5 @@
 using Flow.Launcher.Plugin.AntigravitySwitcher.Models;
+using Flow.Launcher.Plugin.AntigravitySwitcher.Services;
 
 namespace Flow.Launcher.Plugin.AntigravitySwitcher.UI;
 
@@ -12,6 +13,7 @@ public static class ResultFactory
     public const string AddIcon = "Images/add.png";
     public const string RemoveIcon = "Images/remove.png";
     public const string RefreshIcon = "Images/refresh.png";
+    public const string RestartIcon = "Images/restart.png";
 
     public static string IconFor(AccountInfo account) =>
         account.IsActive ? ActiveIcon
@@ -21,11 +23,12 @@ public static class ResultFactory
     public static Result CreateAccountResult(
         AccountInfo account,
         Func<ActionContext, ValueTask<bool>>? onSelect = null,
-        int? scoreOverride = null)
+        int? scoreOverride = null,
+        double targetVisualWidth = 0)
     {
         return new Result
         {
-            Title = account.Title,
+            Title = AccountFormatter.FormatTitle(account, targetVisualWidth),
             SubTitle = account.Subtitle,
             IcoPath = IconFor(account),
             Score = scoreOverride ?? (account.IsActive ? 180 : 100 + (int)Math.Clamp(account.RemainingPercent, 0, 50)),
@@ -110,7 +113,7 @@ public static class ResultFactory
         {
             Title = title,
             SubTitle = subtitle,
-            IcoPath = AppIcon,
+            IcoPath = RestartIcon,
             Score = score,
             AsyncAction = onRestart
         };
