@@ -25,10 +25,52 @@ public sealed class AntigravityAppController : IAntigravityAppController
     private const string LanguageServerProcessName = "language_server";
     private const string AppProcessName = "Antigravity";
 
+    public const string AutoSwitchEnvVar = "ANTIGRAVITY_AUTOSWITCH";
+    public const string ProxyUrl = "http://127.0.0.1:8080";
+    public const string NoProxyList = "localhost,127.0.0.1,::1,speech.googleapis.com";
+
     private readonly CliRunner _cli;
     private readonly IAntigravityCdpClient? _cdpClient;
     private readonly Action<ProcessStartInfo>? _processLauncher;
     private static string? _cachedExePath;
+
+    public static bool IsAutoSwitchEnabled()
+    {
+        var val = Environment.GetEnvironmentVariable(AutoSwitchEnvVar, EnvironmentVariableTarget.User)
+               ?? Environment.GetEnvironmentVariable(AutoSwitchEnvVar);
+        return string.Equals(val, "true", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static void SetAutoSwitch(bool enabled, bool setProcessOnly = false)
+    {
+        var val = enabled ? "true" : "false";
+        Environment.SetEnvironmentVariable(AutoSwitchEnvVar, val);
+
+        if (enabled)
+        {
+            Environment.SetEnvironmentVariable("https_proxy", ProxyUrl);
+            Environment.SetEnvironmentVariable("http_proxy", ProxyUrl);
+            Environment.SetEnvironmentVariable("no_proxy", NoProxyList);
+        }
+        else
+        {
+            Environment.SetEnvironmentVariable("https_proxy", null);
+            Environment.SetEnvironmentVariable("http_proxy", null);
+            Environment.SetEnvironmentVariable("no_proxy", null);
+        }
+
+        if (!setProcessOnly)
+        {
+            try
+            {
+                Environment.SetEnvironmentVariable(AutoSwitchEnvVar, val, EnvironmentVariableTarget.User);
+                Environment.SetEnvironmentVariable("https_proxy", enabled ? ProxyUrl : null, EnvironmentVariableTarget.User);
+                Environment.SetEnvironmentVariable("http_proxy", enabled ? ProxyUrl : null, EnvironmentVariableTarget.User);
+                Environment.SetEnvironmentVariable("no_proxy", enabled ? NoProxyList : null, EnvironmentVariableTarget.User);
+            }
+            catch { }
+        }
+    }
 
     public AntigravityAppController(CliRunner cli, IAntigravityCdpClient? cdpClient = null, Action<ProcessStartInfo>? processLauncher = null)
     {
@@ -423,6 +465,13 @@ public sealed class AntigravityAppController : IAntigravityAppController
             WorkingDirectory = string.IsNullOrEmpty(dir) ? Environment.CurrentDirectory : dir,
             UseShellExecute = false
         };
+
+        if (IsAutoSwitchEnabled())
+        {
+            startInfo.EnvironmentVariables["https_proxy"] = ProxyUrl;
+            startInfo.EnvironmentVariables["http_proxy"] = ProxyUrl;
+            startInfo.EnvironmentVariables["no_proxy"] = NoProxyList;
+        }
 
         if (_processLauncher != null)
         {

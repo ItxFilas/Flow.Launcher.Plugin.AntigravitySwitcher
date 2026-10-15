@@ -308,4 +308,60 @@ public sealed class AntigravityAppControllerTests
         var result = AntigravityAppController.IsAppProcessStale("C:\\nonexistent\\app.asar");
         Assert.False(result);
     }
+
+    [Fact]
+    public void SetAutoSwitch_TogglesProxyEnvironmentVariables()
+    {
+        try
+        {
+            AntigravityAppController.SetAutoSwitch(true, setProcessOnly: true);
+            Assert.True(AntigravityAppController.IsAutoSwitchEnabled());
+            Assert.Equal("http://127.0.0.1:8080", Environment.GetEnvironmentVariable("https_proxy"));
+
+            AntigravityAppController.SetAutoSwitch(false, setProcessOnly: true);
+            Assert.False(AntigravityAppController.IsAutoSwitchEnabled());
+            Assert.Null(Environment.GetEnvironmentVariable("https_proxy"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("https_proxy", null);
+            Environment.SetEnvironmentVariable("http_proxy", null);
+            Environment.SetEnvironmentVariable("no_proxy", null);
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_AUTOSWITCH", null);
+        }
+    }
+
+    [Fact]
+    public async Task RestartAppAsync_WhenAutoSwitchEnabled_InjectsProxyEnvironmentVariables()
+    {
+        AntigravityAppController.ResetCachedExePath();
+        var tempExe = Path.GetTempFileName();
+        System.Diagnostics.ProcessStartInfo? capturedStartInfo = null;
+
+        var controller = new AntigravityAppController(
+            new CliRunner(new SwitcherLocator()),
+            cdpClient: null,
+            processLauncher: si => capturedStartInfo = si);
+
+        try
+        {
+            AntigravityAppController.SetAutoSwitch(true, setProcessOnly: true);
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_BIN", tempExe);
+
+            var result = await controller.RestartAppAsync();
+            Assert.True(result);
+            Assert.NotNull(capturedStartInfo);
+            Assert.Equal("http://127.0.0.1:8080", capturedStartInfo!.EnvironmentVariables["https_proxy"]);
+            Assert.Equal("http://127.0.0.1:8080", capturedStartInfo.EnvironmentVariables["http_proxy"]);
+            Assert.Equal("localhost,127.0.0.1,::1,speech.googleapis.com", capturedStartInfo.EnvironmentVariables["no_proxy"]);
+        }
+        finally
+        {
+            AntigravityAppController.SetAutoSwitch(false, setProcessOnly: true);
+            Environment.SetEnvironmentVariable("ANTIGRAVITY_BIN", null);
+            AntigravityAppController.ResetCachedExePath();
+            if (File.Exists(tempExe)) File.Delete(tempExe);
+        }
+    }
 }
+
