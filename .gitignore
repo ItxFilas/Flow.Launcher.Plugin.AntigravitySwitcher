@@ -5,3 +5,8 @@ publish/
 *.user
 *.suo
 TestResults/
+*.old
+*.log
+.superpowers/
+docs/superpowers/
+HANDOFF.md

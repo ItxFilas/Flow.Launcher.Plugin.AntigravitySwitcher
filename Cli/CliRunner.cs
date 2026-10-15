@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Text;
 
 namespace Flow.Launcher.Plugin.AntigravitySwitcher.Cli;
@@ -74,14 +75,36 @@ public sealed class CliRunner
             RedirectStandardError = true
         };
 
-        var process = Process.Start(start);
-        if (process is null)
+        var process = new Process { StartInfo = start, EnableRaisingEvents = true };
+        try
         {
-            throw new InvalidOperationException($"Failed to start {target.FileName}.");
+            if (!process.Start()) throw new InvalidOperationException($"Failed to start {target.FileName}.");
         }
+        catch
+        {
+            process.Dispose();
+            throw;
+        }
+        _ = RunDetachedAsync(process);
+    }
 
-        process.EnableRaisingEvents = true;
-        process.Exited += (_, _) => process.Dispose();
+    private static async Task RunDetachedAsync(Process process)
+    {
+        using (process)
+        {
+            try
+            {
+                // Drain both pipes without retaining output in memory.
+                await Task.WhenAll(
+                    process.StandardOutput.BaseStream.CopyToAsync(Stream.Null),
+                    process.StandardError.BaseStream.CopyToAsync(Stream.Null),
+                    process.WaitForExitAsync()).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Services.AntigravityCdpClient.Log($"Detached command failed: {ex.GetType().Name}");
+            }
+        }
     }
 
     private static string Combine(string prefix, IEnumerable<string> arguments)

@@ -232,7 +232,6 @@ public sealed class AccountService
     }
 
 
-
     private async Task<Uri?> ResolveApiUriInternalAsync(CancellationToken cancellationToken)
     {
         if (_dashboardPort is int cached && DateTimeOffset.UtcNow - _portCachedAt < TimeSpan.FromMinutes(5))

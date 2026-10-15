@@ -32,7 +32,10 @@ public sealed class AntigravityAppController : IAntigravityAppController
     private readonly CliRunner _cli;
     private readonly IAntigravityCdpClient? _cdpClient;
     private readonly Action<ProcessStartInfo>? _processLauncher;
+    private readonly Func<string, Process[]> _findProcesses;
     private static string? _cachedExePath;
+    private readonly object _asarGate = new();
+    private (string Path, long Length, DateTime Modified)? _checkedAsar;
 
     public static bool IsAutoSwitchEnabled()
     {
@@ -72,11 +75,12 @@ public sealed class AntigravityAppController : IAntigravityAppController
         }
     }
 
-    public AntigravityAppController(CliRunner cli, IAntigravityCdpClient? cdpClient = null, Action<ProcessStartInfo>? processLauncher = null)
+    public AntigravityAppController(CliRunner cli, IAntigravityCdpClient? cdpClient = null, Action<ProcessStartInfo>? processLauncher = null, Func<string, Process[]>? findProcesses = null)
     {
         _cli = cli;
         _cdpClient = cdpClient;
         _processLauncher = processLauncher;
+        _findProcesses = findProcesses ?? Process.GetProcessesByName;
     }
 
     internal static void ResetCachedExePath() => _cachedExePath = null;
@@ -179,19 +183,26 @@ public sealed class AntigravityAppController : IAntigravityAppController
             var processes = Process.GetProcessesByName(AppProcessName);
             if (processes.Length == 0) return false;
 
-            foreach (var p in processes)
+            try
             {
-                try
+                foreach (var p in processes)
                 {
-                    if (p.StartTime.ToUniversalTime() < asarTime)
+                    try
                     {
-                        return true;
+                        if (p.StartTime.ToUniversalTime() < asarTime)
+                        {
+                            return true;
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore processes we cannot inspect
                     }
                 }
-                catch
-                {
-                    // Ignore processes we cannot inspect
-                }
+            }
+            finally
+            {
+                foreach (var process in processes) process.Dispose();
             }
         }
         catch
@@ -203,22 +214,31 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
     public bool EnsureAsarOptimized(string? asarPath = null)
     {
-        if (!string.IsNullOrWhiteSpace(asarPath))
+        var resolved = asarPath ?? ResolveAsarPath();
+        if (string.IsNullOrWhiteSpace(resolved)) return false;
+        lock (_asarGate)
         {
-            return OptimizeAsarBytes(asarPath);
+            var file = new FileInfo(resolved);
+            if (!file.Exists) return false;
+            var stamp = (file.FullName, file.Length, file.LastWriteTimeUtc);
+            if (_checkedAsar == stamp) return false;
+            var changed = OptimizeAsarBytes(resolved, out var inspected);
+            // Cache unchanged archives too, but retry failed reads/writes.
+            if (inspected)
+            {
+                file.Refresh();
+                _checkedAsar = (file.FullName, file.Length, file.LastWriteTimeUtc);
+            }
+            return changed;
         }
-
-        var resolved = ResolveAsarPath();
-        if (!string.IsNullOrWhiteSpace(resolved) && OptimizeAsarBytes(resolved))
-        {
-            return true;
-        }
-
-        return false;
     }
 
     public static bool OptimizeAsarBytes(string filePath)
+        => OptimizeAsarBytes(filePath, out _);
+
+    private static bool OptimizeAsarBytes(string filePath, out bool inspected)
     {
+        inspected = false;
         try
         {
             if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
@@ -240,7 +260,7 @@ public sealed class AntigravityAppController : IAntigravityAppController
                 while (totalRead < fileBytes.Length)
                 {
                     int read = readStream.Read(fileBytes, totalRead, fileBytes.Length - totalRead);
-                    if (read == 0) break;
+                    if (read == 0) return false;
                     totalRead += read;
                 }
             }
@@ -252,6 +272,7 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
             if (replacements.Count == 0)
             {
+                inspected = true;
                 return false;
             }
 
@@ -265,6 +286,7 @@ public sealed class AntigravityAppController : IAntigravityAppController
                 writeStream.Flush();
             }
 
+            inspected = true;
             return true;
         }
         catch (Exception)
@@ -290,7 +312,8 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
     private async Task<bool> RestartBackendAsync(string? savedChatPath, CancellationToken cancellationToken)
     {
-        var processes = Process.GetProcessesByName(LanguageServerProcessName);
+        var previousOrigin = _cdpClient is null ? null : await _cdpClient.CaptureOriginAsync(cancellationToken).ConfigureAwait(false);
+        var processes = _findProcesses(LanguageServerProcessName);
         if (processes.Length == 0)
         {
             return false;
@@ -322,7 +345,27 @@ public sealed class AntigravityAppController : IAntigravityAppController
             }
         }
 
-        _cdpClient?.TriggerPostRestartActionsInBackground(savedChatPath);
+        if (_cdpClient is not null)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    AntigravityCdpClient.Log("Backend restart requested; waiting for new origin");
+                    if (await _cdpClient.RecoverChatAsync(previousOrigin, savedChatPath).ConfigureAwait(false))
+                    {
+                        var sent = await _cdpClient.AutoContinueChatAsync().ConfigureAwait(false);
+                        AntigravityCdpClient.Log(sent ? "Continue input sent" : "Continue skipped or failed");
+                    }
+                    else
+                    {
+                        AntigravityCdpClient.Log("Backend recovery failed; restarting app once");
+                        await RestartAppAsync(savedChatPath).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex) { AntigravityCdpClient.Log($"Recovery failed: {ex.GetType().Name}"); }
+            });
+        }
         return true;
     }
 
@@ -338,11 +381,13 @@ public sealed class AntigravityAppController : IAntigravityAppController
         return true;
     }
 
-    private static bool IsAnyRunning(string processName)
+    private bool IsAnyRunning(string processName)
     {
         try
         {
-            return Process.GetProcessesByName(processName).Length > 0;
+            var processes = _findProcesses(processName);
+            try { return processes.Length > 0; }
+            finally { foreach (var process in processes) process.Dispose(); }
         }
         catch
         {
@@ -360,7 +405,7 @@ public sealed class AntigravityAppController : IAntigravityAppController
         // 1. A running Antigravity process knows its own executable path (< 0.5ms)
         try
         {
-            foreach (var process in Process.GetProcessesByName(AppProcessName))
+            foreach (var process in _findProcesses(AppProcessName))
             {
                 var path = TryGetPath(process);
                 if (!string.IsNullOrWhiteSpace(path) && File.Exists(path))
@@ -403,8 +448,8 @@ public sealed class AntigravityAppController : IAntigravityAppController
 
     private async Task CloseAsync(CancellationToken cancellationToken)
     {
-        var appProcesses = Process.GetProcessesByName(AppProcessName);
-        var backendProcesses = Process.GetProcessesByName(LanguageServerProcessName);
+        var appProcesses = _findProcesses(AppProcessName);
+        var backendProcesses = _findProcesses(LanguageServerProcessName);
 
         if (appProcesses.Length > 0 || backendProcesses.Length > 0)
         {

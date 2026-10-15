@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Cli;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Routing;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Services;

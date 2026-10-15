@@ -363,14 +363,46 @@ public sealed class AntigravityCdpClientTests
     }
 
     [Fact]
-    public void AutoContinueScript_ContainsCorrectSelectorsAndEventDispatch()
+    public void AutoContinueScript_ProtectsDraftsAndRequiresFocus()
     {
         var script = AntigravityCdpClient.AutoContinueScript;
         Assert.Contains("Message input", script);
-        Assert.Contains("contenteditable", script);
-        Assert.Contains("Continue", script);
-        Assert.Contains("insertText", script);
-        Assert.Contains("Enter", script);
+        Assert.Contains("input.innerText || input.value", script);
+        Assert.Contains("document.activeElement === input", script);
+        Assert.DoesNotContain("execCommand", script);
+        Assert.DoesNotContain("KeyboardEvent", script);
+    }
+
+    [Fact]
+    public async Task RecoverChatAsync_WaitsForNewOriginBeforeRestoring_WithoutNoticeDelay()
+    {
+        var portFile = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllText(portFile, "1234");
+            var requests = 0;
+            var scripts = new System.Collections.Generic.List<string>();
+            using var http = new System.Net.Http.HttpClient(new MockHttpMessageHandler(_ =>
+            {
+                requests++;
+                var url = requests == 1 ? "https://127.0.0.1:1000/" :
+                    requests == 2 ? "https://127.0.0.1:2000/" : "https://127.0.0.1:2000/c/saved";
+                var json = System.Text.Json.JsonSerializer.Serialize(new[] { new { type = "page", url, webSocketDebuggerUrl = "ws://localhost/test" } });
+                return new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new System.Net.Http.StringContent(json) };
+            }));
+            var client = new AntigravityCdpClient(http, portFile);
+            client.ScriptEvaluator = (_, script, _) =>
+            {
+                Assert.True(requests >= 2); // No evaluation/navigation on the dying backend.
+                scripts.Add(script);
+                return Task.FromResult(script != AntigravityCdpClient.DismissNoticeScript);
+            };
+            using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(2));
+            Assert.True(await client.RecoverChatAsync("https://127.0.0.1:1000", "/c/saved", timeout.Token));
+            Assert.Equal(3, requests);
+            Assert.Single(scripts.FindAll(s => s.Contains("window.location.assign")));
+        }
+        finally { File.Delete(portFile); }
     }
 
     [Fact]

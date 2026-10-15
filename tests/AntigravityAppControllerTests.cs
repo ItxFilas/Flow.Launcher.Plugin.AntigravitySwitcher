@@ -1,3 +1,7 @@
+using Xunit;
+
+[assembly: CollectionBehavior(DisableTestParallelization = true)]
+
 namespace Flow.Launcher.Plugin.AntigravitySwitcher.Tests;
 
 using System;
@@ -7,10 +11,26 @@ using System.Threading;
 using System.Threading.Tasks;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Cli;
 using Flow.Launcher.Plugin.AntigravitySwitcher.Services;
-using Xunit;
 
 public sealed class AntigravityAppControllerTests
 {
+    [Fact]
+    public void EnsureAsarOptimized_RechecksArchiveAfterUpdate()
+    {
+        var path = Path.GetTempFileName();
+        var controller = new AntigravityAppController(new CliRunner(new SwitcherLocator()));
+        try
+        {
+            File.WriteAllText(path, "const MAX_RESTARTS = 3;");
+            Assert.True(controller.EnsureAsarOptimized(path));
+            Assert.False(controller.EnsureAsarOptimized(path));
+            File.WriteAllText(path, "updated archive: const MAX_RESTARTS = 3;");
+            Assert.True(controller.EnsureAsarOptimized(path));
+            Assert.Contains("const MAX_RESTARTS=999;", File.ReadAllText(path));
+        }
+        finally { File.Delete(path); }
+    }
+
     private sealed class FakeCdpClient : IAntigravityCdpClient
     {
         public int TriggerCallCount { get; private set; }
@@ -40,7 +60,7 @@ public sealed class AntigravityAppControllerTests
         var controller = new AntigravityAppController(
             new CliRunner(new SwitcherLocator()),
             fakeCdp,
-            processLauncher: _ => { });
+            processLauncher: _ => { }, findProcesses: _ => []);
 
         try
         {
@@ -68,7 +88,7 @@ public sealed class AntigravityAppControllerTests
         var controller = new AntigravityAppController(
             new CliRunner(new SwitcherLocator()),
             fakeCdp,
-            processLauncher: _ => { });
+            processLauncher: _ => { }, findProcesses: _ => []);
 
         try
         {
@@ -345,7 +365,7 @@ public sealed class AntigravityAppControllerTests
         var controller = new AntigravityAppController(
             new CliRunner(new SwitcherLocator()),
             cdpClient: null,
-            processLauncher: si => capturedStartInfo = si);
+            processLauncher: si => capturedStartInfo = si, findProcesses: _ => []);
 
         try
         {

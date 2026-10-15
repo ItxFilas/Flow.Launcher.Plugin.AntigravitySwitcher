@@ -4,10 +4,10 @@
   "ActionKeyword": "ag",
   "Name": "Antigravity Switcher",
   "Description": "Manage and switch Antigravity accounts",
-  "Author": "dlest",
+  "Author": "ItxFilas",
   "Version": "1.5.0",
   "Language": "csharp",
-  "Website": "https://github.com/muriel-gasparini/antigravity-account-switcher",
+  "Website": "https://github.com/ItxFilas/Flow.Launcher.Plugin.AntigravitySwitcher",
   "ExecuteFileName": "Flow.Launcher.Plugin.AntigravitySwitcher.dll",
   "IcoPath": "Images\\app.png"
 }

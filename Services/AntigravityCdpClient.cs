@@ -20,58 +20,97 @@ public interface IAntigravityCdpClient
     void TriggerAutoDismissInBackground();
     Task<bool> AutoContinueChatAsync(CancellationToken cancellationToken = default) => Task.FromResult(false);
     void TriggerPostRestartActionsInBackground(string? savedChatPath = null, bool autoContinue = true) { }
+    Task<string?> CaptureOriginAsync(CancellationToken token = default) => Task.FromResult<string?>(null);
+    Task<bool> RecoverChatAsync(string? previousOrigin, string? chatPath, CancellationToken token = default) => Task.FromResult(true);
 }
 
 public sealed class AntigravityCdpClient : IAntigravityCdpClient
 {
+    private static readonly string DiagnosticPath = Path.Combine(Path.GetTempPath(), "AntigravitySwitcher.log");
+    internal static void Log(string message)
+    {
+        try { File.AppendAllText(DiagnosticPath, $"{DateTimeOffset.Now:O} {message}{Environment.NewLine}"); } catch { }
+    }
+
+    public async Task<string?> CaptureOriginAsync(CancellationToken token = default)
+    {
+        try
+        {
+            var port = ResolveActivePort();
+            if (port is null) return null;
+            using var doc = JsonDocument.Parse(await _http.GetStringAsync($"http://127.0.0.1:{port}/json", token).ConfigureAwait(false));
+            foreach (var page in doc.RootElement.EnumerateArray())
+                if (page.GetProperty("type").GetString() == "page" && Uri.TryCreate(page.GetProperty("url").GetString(), UriKind.Absolute, out var url))
+                    return url.GetLeftPart(UriPartial.Authority);
+        }
+        catch { }
+        return null;
+    }
+
+    // One readiness loop: no fixed notice delay, and no navigation on the dying origin.
+    public async Task<bool> RecoverChatAsync(string? previousOrigin, string? chatPath, CancellationToken token = default)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token);
+        budget.CancelAfter(TimeSpan.FromSeconds(10));
+        var navigated = false;
+        try
+        {
+            while (!budget.IsCancellationRequested)
+            {
+                try
+                {
+                    var port = ResolveActivePort();
+                    if (port is not null)
+                    {
+                        using var doc = JsonDocument.Parse(await _http.GetStringAsync($"http://127.0.0.1:{port}/json", budget.Token).ConfigureAwait(false));
+                        foreach (var page in doc.RootElement.EnumerateArray())
+                        {
+                            if (page.GetProperty("type").GetString() != "page" ||
+                                !Uri.TryCreate(page.GetProperty("url").GetString(), UriKind.Absolute, out var url) ||
+                                url.Scheme != "https" || !url.IsLoopback ||
+                                url.GetLeftPart(UriPartial.Authority) == previousOrigin) continue;
+                            var ws = page.GetProperty("webSocketDebuggerUrl").GetString();
+                            if (ws is null) continue;
+                            // A loaded application document is required before restoring the route.
+                            if (!await TryEvaluateScriptAsync(ws, "document.readyState === 'complete' && document.body && document.body.children.length > 0", budget.Token).ConfigureAwait(false)) continue;
+                            await TryEvaluateScriptAsync(ws, DismissNoticeScript, budget.Token).ConfigureAwait(false);
+                            if (!string.IsNullOrWhiteSpace(chatPath) && ChatPathRegex.IsMatch(chatPath) && url.PathAndQuery != chatPath)
+                            {
+                                if (!navigated)
+                                {
+                                    navigated = await TryEvaluateScriptAsync(ws, BuildRestoreScript(chatPath), budget.Token).ConfigureAwait(false);
+                                    Log("Chat navigation requested");
+                                }
+                                continue;
+                            }
+                            if (await TryEvaluateScriptAsync(ws, "(() => { const e = document.querySelector('[aria-label=\"Message input\"]'); return !!e && !!e.getClientRects().length; })()", budget.Token).ConfigureAwait(false))
+                            {
+                                Log("Chat composer ready");
+                                return true;
+                            }
+                        }
+                    }
+                }
+                catch (OperationCanceledException) when (budget.IsCancellationRequested) { break; }
+                catch { }
+                await Task.Delay(100, budget.Token).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) { }
+        Log("Chat readiness timed out");
+        return false;
+    }
     private static readonly Regex ChatPathRegex = new(@"^/c/[a-zA-Z0-9_\-]+(\?.*)?$", RegexOptions.Compiled);
 
     public const string AutoContinueScript = @"(() => {
-        // 1. If there's an explicit Continue / Retry / Resume button, click it
-        const buttons = Array.from(document.querySelectorAll('button'));
-        const retryBtn = buttons.find(b => {
-            const t = (b.innerText || b.textContent || b.getAttribute('aria-label') || '').toLowerCase();
-            return (t.includes('continue') || t.includes('retry') || t.includes('resume')) && !b.disabled;
-        });
-        if (retryBtn) {
-            retryBtn.click();
-            return true;
-        }
-
-        // 2. Find message input box
-        const input = document.querySelector('[aria-label=""Message input""]') ||
-                      document.querySelector('[contenteditable=""true""]');
-        if (!input) return false;
-
-        // Check if agent is currently actively running (Cancel / Stop button present)
-        const isRunning = buttons.some(b => {
-            const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-            return aria.includes('cancel') || aria.includes('stop execution');
-        });
-        if (isRunning) return false;
-
-        // 3. Focus, type 'Continue', and submit
+        const input = document.querySelector('[aria-label=""Message input""]');
+        if (!input || !input.getClientRects().length) return false;
+        if ((input.innerText || input.value || '').trim()) return false;
+        const running = Array.from(document.querySelectorAll('button')).some(b =>
+            /stop|cancel/i.test(b.getAttribute('aria-label') || '') && !b.disabled);
+        if (running) return false;
         input.focus();
-        document.execCommand('insertText', false, 'Continue');
-
-        // 4. Submit via Enter keydown or clicking send button
-        const enterEvent = new KeyboardEvent('keydown', {
-            key: 'Enter',
-            code: 'Enter',
-            keyCode: 13,
-            which: 13,
-            bubbles: true,
-            cancelable: true
-        });
-        input.dispatchEvent(enterEvent);
-
-        const sendBtn = Array.from(input.parentElement?.parentElement?.querySelectorAll('button') || [])
-            .find(b => !b.disabled && (b.getAttribute('aria-label') || '').toLowerCase().includes('send'));
-        if (sendBtn) {
-            sendBtn.click();
-        }
-
-        return true;
+        return document.activeElement === input;
     })()";
 
     public const string DismissNoticeScript = @"(() => {
@@ -105,10 +144,11 @@ public sealed class AntigravityCdpClient : IAntigravityCdpClient
 
     private readonly HttpClient _http;
     private readonly string _portFilePath;
+    internal Func<string, string, CancellationToken, Task<bool>>? ScriptEvaluator { get; set; }
 
     public AntigravityCdpClient(HttpClient? http = null, string? portFilePath = null)
     {
-        _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        _http = http ?? new HttpClient(new HttpClientHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(2) };
         _portFilePath = portFilePath ?? Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "Antigravity",
@@ -176,8 +216,7 @@ public sealed class AntigravityCdpClient : IAntigravityCdpClient
             .Replace("'", "\\'");
 
         return $@"(() => {{
-    const p = window.location.pathname;
-    if (p === '/' || !p.startsWith('/c/')) {{
+    if (window.location.pathname + window.location.search !== '{escapedPath}') {{
         window.location.assign('{escapedPath}');
         return true;
     }}
@@ -301,7 +340,7 @@ public sealed class AntigravityCdpClient : IAntigravityCdpClient
                         if (element.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "page" &&
                             element.TryGetProperty("webSocketDebuggerUrl", out var wsProp) && wsProp.GetString() is { } wsUrl)
                         {
-                            var continued = await TryEvaluateScriptAsync(wsUrl, AutoContinueScript, cancellationToken).ConfigureAwait(false);
+                            var continued = await TrySendContinueAsync(wsUrl, cancellationToken).ConfigureAwait(false);
                             if (continued) return true;
                         }
                     }
@@ -336,18 +375,11 @@ public sealed class AntigravityCdpClient : IAntigravityCdpClient
         {
             try
             {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-                if (!string.IsNullOrWhiteSpace(savedChatPath))
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(16));
+                if (await RecoverChatAsync(null, savedChatPath, cts.Token).ConfigureAwait(false) && autoContinue)
                 {
-                    await RestoreActiveChatAsync(savedChatPath, cts.Token).ConfigureAwait(false);
-                }
-
-                await Task.Delay(500, cts.Token).ConfigureAwait(false);
-                await AutoDismissSecurityNoticeAsync(cts.Token).ConfigureAwait(false);
-
-                if (autoContinue)
-                {
-                    await AutoContinueChatAsync(cts.Token).ConfigureAwait(false);
+                    var sent = await AutoContinueChatAsync(cts.Token).ConfigureAwait(false);
+                    Log(sent ? "Continue submitted" : "Continue skipped or submission unconfirmed");
                 }
             }
             catch
@@ -356,8 +388,31 @@ public sealed class AntigravityCdpClient : IAntigravityCdpClient
         });
     }
 
-    private static async Task<bool> TryEvaluateScriptAsync(string wsUrl, string script, CancellationToken cancellationToken)
+    private static async Task<bool> TrySendContinueAsync(string wsUrl, CancellationToken token)
     {
+        using var ws = new ClientWebSocket();
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(2));
+        await ws.ConnectAsync(new Uri(wsUrl), timeout.Token).ConfigureAwait(false);
+        var session = new CdpSession(ws, timeout.Token);
+        if (!await session.Evaluate(AutoContinueScript)) return false;
+        await session.Command("Input.insertText", new { text = "Continue" });
+        if (!await session.Evaluate("(() => { const e = document.activeElement; return (e.innerText || e.value || '').trim() === 'Continue'; })()")) return false;
+        try
+        {
+            await session.Command("Input.dispatchKeyEvent", new { type = "keyDown", key = "Enter", code = "Enter", windowsVirtualKeyCode = 13 });
+            await session.Command("Input.dispatchKeyEvent", new { type = "keyUp", key = "Enter", code = "Enter", windowsVirtualKeyCode = 13 });
+            // Never retry after Enter: a slow acknowledgement must not duplicate the message.
+            var confirmed = await session.Evaluate("(() => { const e = document.querySelector('[aria-label=\"Message input\"]'); return !!e && !(e.innerText || e.value || '').trim(); })()");
+            Log(confirmed ? "Continue composer cleared" : "Enter sent; acknowledgement pending (no retry)");
+        }
+        catch { Log("Enter attempted; CDP disconnected before acknowledgement (no retry)"); }
+        return true;
+    }
+
+    private async Task<bool> TryEvaluateScriptAsync(string wsUrl, string script, CancellationToken cancellationToken)
+    {
+        if (ScriptEvaluator is not null) return await ScriptEvaluator(wsUrl, script, cancellationToken).ConfigureAwait(false);
         try
         {
             using var ws = new ClientWebSocket();
@@ -366,35 +421,8 @@ public sealed class AntigravityCdpClient : IAntigravityCdpClient
 
             await ws.ConnectAsync(new Uri(wsUrl), connectCts.Token).ConfigureAwait(false);
 
-            var req = JsonSerializer.Serialize(new
-            {
-                id = 1,
-                method = "Runtime.evaluate",
-                @params = new
-                {
-                    expression = script,
-                    returnByValue = true
-                }
-            });
-
-            var bytes = Encoding.UTF8.GetBytes(req);
-            await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
-
-            var buffer = new byte[4096];
-            var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken).ConfigureAwait(false);
-            if (result.Count > 0)
-            {
-                using var resDoc = JsonDocument.Parse(new ReadOnlyMemory<byte>(buffer, 0, result.Count));
-                if (resDoc.RootElement.TryGetProperty("result", out var r) &&
-                    r.TryGetProperty("result", out var inner) &&
-                    inner.TryGetProperty("value", out var val) &&
-                    val.ValueKind == JsonValueKind.True)
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            var session = new CdpSession(ws, connectCts.Token);
+            return await session.Evaluate(script).ConfigureAwait(false);
         }
         catch
         {

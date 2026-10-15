@@ -16,8 +16,15 @@ Windows Credential Manager (`gemini:antigravity`), marks the account active, and
 then applies it to the running app. The switch is applied by restarting only Antigravity's
 `language_server` backend — the Electron frontend respawns it automatically and the new
 process picks up the swapped login **without closing the app window**. If the backend does
-not come back within ~15 s, the plugin falls back to closing and relaunching the app. No
+not recover its chat interface within 10 s, the plugin falls back once to closing and relaunching the app. No
 proxy environment variables are involved.
+
+After a switch, recovery checks run every 100 ms and proceed immediately when the new
+backend's chat composer is ready. Chat restoration waits for Antigravity's own port change
+and page reload. Security notices are checked during recovery without a fixed wait.
+The plugin sends `Continue` through CDP only into an empty, idle composer, and avoids
+retrying after Enter to prevent duplicate messages. Recovery diagnostics are written to
+`%TEMP%\AntigravitySwitcher.log`.
 
 | Operation        | REST call                              | CLI fallback              |
 | :--------------- | :------------------------------------- | :------------------------ |
